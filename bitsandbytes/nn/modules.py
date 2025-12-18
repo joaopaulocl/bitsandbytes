@@ -17,6 +17,8 @@ from bitsandbytes.functional import (
     _convert_weight_packed_for_cpu,
     _convert_weight_packed_for_cpu_inverse,
     has_avx512bf16,
+    dequantize_blockwise,
+    quantize_blockwise,
 )
 from bitsandbytes.optim import GlobalOptimManager
 from bitsandbytes.utils import INVERSE_LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING, OutlierTracer
@@ -554,7 +556,46 @@ class Linear4bit(nn.Linear):
 
         return bnb.matmul_4bit(x, weight, bias=bias, quant_state=quant_state).to(inp_dtype)
 
+class Linear4bitFakeQuantAct(Linear4bit):
+    """
+    Variant of Linear4bit that fake-quantizes activations prior to the low-bit matmul.
 
+    Inputs are quantized/dequantized blockwise so the layer simulates activation quantization
+    while still running on the existing 4-bit kernels.
+    """
+
+    def __init__(
+        self,
+        input_features,
+        output_features,
+        bias=True,
+        compute_dtype=None,
+        compress_statistics=True,
+        quant_type="fp4",
+        quant_storage=torch.uint8,
+        device=None,
+        activation_blocksize: int = 4096,
+    ):
+        super().__init__(
+            input_features,
+            output_features,
+            bias=bias,
+            compute_dtype=compute_dtype,
+            compress_statistics=compress_statistics,
+            quant_type=quant_type,
+            quant_storage=quant_storage,
+            device=device,
+        )
+        self.activation_blocksize = activation_blocksize
+
+    def _fake_quantize_input(self, x: torch.Tensor) -> torch.Tensor:
+        q, quant_state = quantize_blockwise(x, blocksize=self.activation_blocksize)
+        return dequantize_blockwise(q, quant_state=quant_state)
+
+    def forward(self, x: torch.Tensor):
+        x = self._fake_quantize_input(x)
+        return super().forward(x)
+    
 class LinearFP4(Linear4bit):
     """
     Implements the FP4 data type.

@@ -13,6 +13,12 @@ __global__ void kQuantize(float* code, float* __restrict__ const A, unsigned cha
 __global__ void kDequantize(float* code, unsigned char* A, float* out, const int n);
 
 template <typename T, int BLOCK_SIZE, int NUM_PER_TH, int STOCHASTIC, int DATA_TYPE>
+__global__ void kEWMultiplicationBlockwise(
+    float* code, unsigned char* A, float* absmax_a, unsigned char* B, float* absmax_b, T* out,
+    const int blocksize, const int n
+);
+
+template <typename T, int BLOCK_SIZE, int NUM_PER_TH, int STOCHASTIC, int DATA_TYPE>
 __global__ void kQuantizeBlockwise(
     float* code, T* __restrict__ const A, float* absmax, unsigned char* out, float* __restrict__ const rand,
     const int rand_offset, const int n

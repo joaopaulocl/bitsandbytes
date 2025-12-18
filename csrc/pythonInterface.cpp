@@ -388,6 +388,18 @@ extern "C" {
 #if BUILD_CUDA || BUILD_HIP
 void cquantize(float* code, float* A, unsigned char* out, int n) { quantize(code, A, out, n); }
 
+void multiplyBlockwise_fp16_nf4(
+    float* code, unsigned char* A, float* absmaxA, unsigned char* B, float* absmaxB, half* out, int blocksize, const int n, cudaStream_t stream
+) {
+    multiplyBlockwise<half, NF4>(code, A, absmaxA, B, absmaxB, out, blocksize, n, stream);
+}
+
+void multiplyBlockwise_fp32_nf4(
+    float* code, unsigned char* A, float* absmaxA, unsigned char* B, float* absmaxB, float* out, int blocksize, const int n, cudaStream_t stream
+) {
+    multiplyBlockwise<float, NF4>(code, A, absmaxA, B, absmaxB, out, blocksize, n, stream);
+}
+
 void cdequantize(float* code, unsigned char* A, float* out, int n, cudaStream_t stream) {
     dequantize(code, A, out, n, stream);
 }

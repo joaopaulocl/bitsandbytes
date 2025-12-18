@@ -796,6 +796,100 @@ def get_4bit_type(typename, device=None, blocksize=64):
 
     return data
 
+def multiply_nf4(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: Optional[torch.Tensor] = None,
+    absmaxB: Optional[torch.Tensor] = None,
+    quant_state: Optional[QuantState] = None,
+    out: Optional[torch.Tensor] = None,
+    blocksize: Optional[int] = None,
+) -> torch.Tensor:
+    if blocksize is None:
+        blocksize = 64 if not ROCM_WARP_SIZE_64 else 128
+    return multiply_4bit(A, B, absmaxA, absmaxB, quant_state, out, blocksize, "nf4")
+
+
+def multiply_4bit(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: Optional[torch.Tensor] = None,
+    absmaxB: Optional[torch.Tensor] = None,
+    quant_state: Optional[QuantState] = None,
+    out: Optional[torch.Tensor] = None,
+    blocksize: Optional[int] = None,
+    quant_type="nf4",
+) -> torch.Tensor:
+    """Dequantizes a packed 4-bit quantized tensor.
+
+    The input tensor is dequantized by dividing it into blocks of `blocksize` values.
+    The the absolute maximum value within these blocks is used for scaling
+    the non-linear dequantization.
+
+    Args:
+        A (`torch.Tensor`): The quantized input tensor.
+        quant_state ([`QuantState`], *optional*):
+            The quantization state as returned by [`quantize_4bit`].
+            Required if `absmax` is not provided.
+        absmax (`torch.Tensor`, *optional*):
+            A tensor containing the scaling values.
+            Required if `quant_state` is not provided and ignored otherwise.
+        out (`torch.Tensor`, *optional*): A tensor to use to store the result.
+        blocksize (`int`, *optional*):
+            The size of the blocks. Defaults to 128 on ROCm and 64 otherwise.
+            Valid values are 64, 128, 256, 512, 1024, 2048, and 4096.
+        quant_type (`str`, *optional*): The data type to use: `nf4` or `fp4`. Defaults to `fp4`.
+
+    Raises:
+        ValueError: Raised when the input data type or blocksize is not supported.
+
+    Returns:
+        `torch.Tensor`: The dequantized tensor.
+    """
+
+    if blocksize is None:
+        blocksize = 64 if not ROCM_WARP_SIZE_64 else 128
+
+    if quant_state is None:
+        assert absmaxA is not None and out is not None
+
+        quant_state = QuantState(
+            absmax=absmaxA,
+            shape=out.shape,
+            dtype=out.dtype,
+            blocksize=blocksize,
+            quant_type=quant_type,
+        )
+
+    else:
+        absmax = quant_state.absmax
+
+    if quant_state.nested:
+        absmax = dequantize_blockwise(quant_state.absmax, quant_state.state2)
+        absmax += quant_state.offset
+        if absmax.dtype != torch.float32:
+            absmax = absmax.float()
+
+    if out is not None:
+        torch.ops.bitsandbytes.multiply_4bit.out(
+            A, B, absmaxA, absmaxB, quant_state.blocksize, quant_state.quant_type, quant_state.shape, quant_state.dtype, out=out
+        )
+    else:
+        out = torch.ops.bitsandbytes.multiply_4bit.default(
+            A,
+            B,
+            absmaxA,
+            absmaxB,
+            quant_state.blocksize,
+            quant_state.quant_type,
+            quant_state.shape,
+            quant_state.dtype,
+        )
+
+    if A.shape[0] == 1:  # is transposed, transpose back
+        return out.t()
+    return out
+
 
 def quantize_fp4(
     A: torch.Tensor,

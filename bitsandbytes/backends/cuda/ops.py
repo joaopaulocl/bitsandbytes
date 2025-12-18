@@ -424,6 +424,80 @@ def _dequantize_4bit_impl(
                 lib.cdequantize_blockwise_fp32_nf4(*args)
 
 
+@register_kernel("bitsandbytes::multiply_4bit", "cuda")
+def _(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: torch.Tensor,
+    absmaxB: torch.Tensor,
+    blocksize: int,
+    quant_type: str,
+    shape: Sequence[int],
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    out = torch.empty(shape, dtype=dtype, device=A.device)
+    _multiply_4bit_impl(A, B, absmaxA, absmaxB, blocksize, quant_type, dtype, out=out)
+    return out
+
+
+@register_kernel("bitsandbytes::multiply_4bit.out", "cuda")
+def _(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: torch.Tensor,
+    absmaxB: torch.Tensor,
+    blocksize: int,
+    quant_type: str,
+    shape: Sequence[int],
+    dtype: torch.dtype,
+    out: torch.Tensor,
+) -> None:
+    torch._check(out.shape == torch.Size(shape), lambda: f"Expected out.shape == {shape}, got {out.shape}")
+    torch._check(out.dtype == dtype, lambda: f"Expected out.dtype == {dtype}, got {out.dtype}")
+    _multiply_4bit_impl(A, B, absmaxA, absmaxB, blocksize, quant_type, dtype, out=out)
+
+
+def _multiply_4bit_impl(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: torch.Tensor,
+    absmaxB: torch.Tensor,
+    blocksize: int,
+    quant_type: str,
+    dtype: torch.dtype,
+    out: torch.Tensor,
+) -> None:
+    if ROCM_WARP_SIZE_64:
+        torch._check(blocksize in [4096, 2048, 1024, 512, 256, 128])
+    else:
+        torch._check(blocksize in [4096, 2048, 1024, 512, 256, 128, 64])
+
+    torch._check(quant_type in ["fp4", "nf4"])
+    torch._check(
+        dtype in [torch.bfloat16, torch.float16, torch.float32],
+        lambda: f"Blockwise 4bit element-wise multiplication only supports 16/32-bit floats, but got {dtype}",
+    )
+
+    with _cuda_device_of(A):
+        args = (
+            None,
+            get_ptr(A), # different order: A, absmaxA, B, absmaxB 
+            get_ptr(absmaxA),
+            get_ptr(B),
+            get_ptr(absmaxB),
+            get_ptr(out),
+            ct.c_int(blocksize),
+            ct.c_int32(out.numel()),
+            _get_tensor_stream(A),
+        )
+
+        if out.dtype == torch.float16:
+            lib.multiplyBlockwise_fp16_nf4(*args)
+            
+        elif out.dtype == torch.float32:
+            lib.multiplyBlockwise_fp32_nf4(*args)
+
+
 @register_kernel("bitsandbytes::gemv_4bit", "cuda")
 def _(
     A: torch.Tensor, B: torch.Tensor, shapeB: Sequence[int], absmax: torch.Tensor, code: torch.Tensor, blocksize: int

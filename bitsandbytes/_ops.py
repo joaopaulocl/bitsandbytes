@@ -257,6 +257,32 @@ def _(
     torch._check(out.device == A.device, lambda: f"Expected out.device == {A.device}, got {out.device}")
     torch._check(out.dtype == dtype, lambda: f"Expected out.dtype == {dtype}, got {out.dtype}")
 
+torch.library.define(
+    "bitsandbytes::multiply_4bit",
+    "(Tensor A, Tensor B, Tensor absmaxA, Tensor absmaxB, int blocksize, str quant_type, int[] shape, ScalarType dtype) -> Tensor",
+)
+
+@register_fake("bitsandbytes::multiply_4bit")
+def _(A: torch.Tensor, B: torch.Tensor, absmaxA: torch.Tensor, absmaxB: torch.Tensor, blocksize: int, 
+      quant_type: str, shape: Sequence[int], dtype: torch.dtype) -> torch.Tensor:
+    
+    torch._check_is_size(blocksize)
+    torch._check(A.dtype == torch.uint8, lambda: f"A must be uint8, got {A.dtype}")
+    return torch.empty_like(A, dtype=dtype)
+
+torch.library.define(
+    "bitsandbytes::multiply_4bit.out",
+    "(Tensor A, Tensor B, Tensor absmaxA, Tensor absmaxB, int blocksize, str quant_type, int[] shape, ScalarType dtype, Tensor! out) -> ()",
+)
+
+@register_fake("bitsandbytes::multiply_4bit.out")
+def _(A: torch.Tensor, B: torch.Tensor, absmaxA: torch.Tensor, absmaxB: torch.Tensor, blocksize: int, 
+      quant_type: str, shape: Sequence[int], dtype: torch.dtype, out: torch.Tensor):
+    torch._check_is_size(blocksize)
+    torch._check(A.dtype == torch.uint8, lambda: f"A must be uint8, got {A.dtype}")
+    torch._check(out.shape == A.shape, lambda: f"Expected out.shape == {A.shape}, got {out.shape}")
+    torch._check(out.device == A.device, lambda: f"Expected out.device == {A.device}, got {out.device}")
+    torch._check(out.dtype == dtype, lambda: f"Expected out.dtype == {dtype}, got {out.dtype}")
 
 torch.library.define("bitsandbytes::quantize_blockwise", "(Tensor A, Tensor code, int blocksize) -> (Tensor, Tensor)")
 

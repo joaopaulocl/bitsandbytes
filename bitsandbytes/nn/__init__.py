@@ -17,6 +17,7 @@ from .modules import (
     Params4bit,
     StableEmbedding,
     SwitchBackLinearBnb,
+    Linear4bitFakeQuantAct
 )
 from .triton_based_modules import (
     StandardLinear,

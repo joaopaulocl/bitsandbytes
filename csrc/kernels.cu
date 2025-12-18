@@ -40,6 +40,12 @@ __device__ static float fp4_dequantization_lut[8] = {
     0.25f            // 0b111
 };
 
+// source: generated from scripts/run_nf4_luts.py
+// approximation of the empirical lloyd's algorithm LUT for normal distribution
+__device__ static float EWM_nf4_dequantization_lut[256] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.027, 0.027, 0.027, 0.055, 0.055, 0.102, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.027, 0.027, 0.055, 0.055, 0.102, 0.102, 0.168, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.027, 0.055, 0.102, 0.102, 0.168, 0.168, 0.294, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.027, 0.055, 0.102, 0.168, 0.168, 0.294, 0.294, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.055, 0.102, 0.168, 0.168, 0.294, 0.294, 0.547, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.055, 0.102, 0.168, 0.294, 0.294, 0.547, 0.547, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.102, 0.168, 0.294, 0.294, 0.547, 0.547, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.027, 0.027, 0.027, 0.055, 0.055, 0.102, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.027, 0.027, 0.055, 0.055, 0.102, 0.102, 0.168, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.027, 0.055, 0.102, 0.102, 0.168, 0.168, 0.294, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.027, 0.055, 0.102, 0.168, 0.168, 0.294, 0.294, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.055, 0.102, 0.168, 0.168, 0.294, 0.294, 0.547, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.055, 0.102, 0.168, 0.294, 0.294, 0.547, 0.547, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.102, 0.168, 0.294, 0.294, 0.547, 0.547, 1.0};
+// Exact values 
+//__device__ static float EWM_nf4_dequantization_lut[256] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0, 0.0, 0.008299210108816624, 0.016835279762744904, 0.02590883895754814, 0.035975389182567596, 0.047836609184741974, 0.06342381983995438, 0.09109999984502792, -0.0, -0.008299210108816624, -0.016835279762744904, -0.02590883895754814, -0.035975389182567596, -0.047836609184741974, -0.06342381983995438, -0.09109999984502792, 0.0, 0.016835279762744904, 0.03415104001760483, 0.052557118237018585, 0.07297752052545547, 0.09703847765922546, 0.1286577582359314, 0.18479999899864197, -0.0, -0.016835279762744904, -0.03415104001760483, -0.052557118237018585, -0.07297752052545547, -0.09703847765922546, -0.1286577582359314, -0.18479999899864197, 0.0, 0.02590883895754814, 0.052557118237018585, 0.08088335394859314, 0.11230955272912979, 0.14933842420578003, 0.1979992687702179, 0.28439998626708984, -0.0, -0.02590883895754814, -0.052557118237018585, -0.08088335394859314, -0.11230955272912979, -0.14933842420578003, -0.1979992687702179, -0.28439998626708984, 0.0, 0.035975389182567596, 0.07297752052545547, 0.11230955272912979, 0.15594600141048431, 0.20736198127269745, 0.27492937445640564, 0.39489999413490295, -0.0, -0.035975389182567596, -0.07297752052545547, -0.11230955272912979, -0.15594600141048431, -0.20736198127269745, -0.27492937445640564, -0.39489999413490295, 0.0, 0.047836609184741974, 0.09703847765922546, 0.14933842420578003, 0.20736198127269745, 0.2757300138473511, 0.3655746281147003, 0.5250999927520752, -0.0, -0.047836609184741974, -0.09703847765922546, -0.14933842420578003, -0.20736198127269745, -0.2757300138473511, -0.3655746281147003, -0.5250999927520752, 0.0, 0.06342381983995438, 0.1286577582359314, 0.1979992687702179, 0.27492937445640564, 0.3655746281147003, 0.4846944510936737, 0.6962000131607056, -0.0, -0.06342381983995438, -0.1286577582359314, -0.1979992687702179, -0.27492937445640564, -0.3655746281147003, -0.4846944510936737, -0.6962000131607056, 0.0, 0.09109999984502792, 0.18479999899864197, 0.28439998626708984, 0.39489999413490295, 0.5250999927520752, 0.6962000131607056, 1.0, -0.0, -0.09109999984502792, -0.18479999899864197, -0.28439998626708984, -0.39489999413490295, -0.5250999927520752, -0.6962000131607056, -1.0, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.0, -0.008299210108816624, -0.016835279762744904, -0.02590883895754814, -0.035975389182567596, -0.047836609184741974, -0.06342381983995438, -0.09109999984502792, 0.0, 0.008299210108816624, 0.016835279762744904, 0.02590883895754814, 0.035975389182567596, 0.047836609184741974, 0.06342381983995438, 0.09109999984502792, -0.0, -0.016835279762744904, -0.03415104001760483, -0.052557118237018585, -0.07297752052545547, -0.09703847765922546, -0.1286577582359314, -0.18479999899864197, 0.0, 0.016835279762744904, 0.03415104001760483, 0.052557118237018585, 0.07297752052545547, 0.09703847765922546, 0.1286577582359314, 0.18479999899864197, -0.0, -0.02590883895754814, -0.052557118237018585, -0.08088335394859314, -0.11230955272912979, -0.14933842420578003, -0.1979992687702179, -0.28439998626708984, 0.0, 0.02590883895754814, 0.052557118237018585, 0.08088335394859314, 0.11230955272912979, 0.14933842420578003, 0.1979992687702179, 0.28439998626708984, -0.0, -0.035975389182567596, -0.07297752052545547, -0.11230955272912979, -0.15594600141048431, -0.20736198127269745, -0.27492937445640564, -0.39489999413490295, 0.0, 0.035975389182567596, 0.07297752052545547, 0.11230955272912979, 0.15594600141048431, 0.20736198127269745, 0.27492937445640564, 0.39489999413490295, -0.0, -0.047836609184741974, -0.09703847765922546, -0.14933842420578003, -0.20736198127269745, -0.2757300138473511, -0.3655746281147003, -0.5250999927520752, 0.0, 0.047836609184741974, 0.09703847765922546, 0.14933842420578003, 0.20736198127269745, 0.2757300138473511, 0.3655746281147003, 0.5250999927520752, -0.0, -0.06342381983995438, -0.1286577582359314, -0.1979992687702179, -0.27492937445640564, -0.3655746281147003, -0.4846944510936737, -0.6962000131607056, 0.0, 0.06342381983995438, 0.1286577582359314, 0.1979992687702179, 0.27492937445640564, 0.3655746281147003, 0.4846944510936737, 0.6962000131607056, -0.0, -0.09109999984502792, -0.18479999899864197, -0.28439998626708984, -0.39489999413490295, -0.5250999927520752, -0.6962000131607056, -1.0, 0.0, 0.09109999984502792, 0.18479999899864197, 0.28439998626708984, 0.39489999413490295, 0.5250999927520752, 0.6962000131607056, 1.0};
+
 __device__ static float nf4_dequantization_lut[16] = {
     -1.0f,                 // 0b0000
     -0.6961928009986877f,  // 0b0001
@@ -120,6 +126,47 @@ __device__ unsigned char dQuantizeFP4(float x) {
 }
 
 __device__ __forceinline__ float dDequantizeNF4(unsigned char val) { return nf4_dequantization_lut[val & 0x0F]; }
+
+__device__ __forceinline__ float dDequantizeEWM_NF4(unsigned char A, unsigned char B) { return EWM_nf4_dequantization_lut[(A << 4) | B]; }
+
+/*inline float dDequantizeEWM_NF4(unsigned char a, unsigned char b) {
+    const uint8_t sign_a = (a >> 3) & 0x1;
+    const uint8_t sign_b = (b >> 3) & 0x1;
+    const uint8_t out_sign = sign_a ^ sign_b;
+
+    const uint8_t idx_a = a & 0x7;
+    const uint8_t idx_b = b & 0x7;
+
+    // 6-bit value
+    const uint8_t v = (idx_a << 3) | idx_b;
+
+    float mag;
+
+    if (v & 32) {
+        if (v & 16) {
+            if (v & 8)
+                mag = (v & 1) ? 1.0f : 0.547f;
+            else
+                mag = (v & 2) ? 0.547f : 0.294f;
+        } else {
+            if (v & 8)
+                mag = (v & 4) ? 0.294f : 0.168f;
+            else
+                mag = (v & 2) ? 0.102f : 0.055f;
+        }
+    } else {
+        if (v & 16) {
+            if (v & 8)
+                mag = (v & 4) ? 0.168f : 0.102f;
+            else
+                mag = (v & 2) ? 0.055f : 0.027f;
+        } else {
+            mag = 0.0f;
+        }
+    }
+
+    return out_sign ? -mag : mag;
+}*/
 
 __device__ unsigned char dQuantizeNF4(float x) {
 
@@ -420,6 +467,71 @@ __global__ void kQuantizeBlockwise(
         StoreChar(storec).Store(
             &(out[(DATA_TYPE > 0) ? i / 2 : i]), qvals, (DATA_TYPE > 0) ? (valid_items + 1) / 2 : valid_items
         );
+    }
+}
+
+template <typename T, int TILE_SIZE, int THREADS, int NUM_PER_TH, int DATA_TYPE>
+__global__ void
+    kEWMultiplicationBlockwise(float* code, unsigned char* A, float* absmax_a, unsigned char* B, float* absmax_b, T* out, const int blocksize, const int n) {
+
+    const int n_load = (gridDim.x * TILE_SIZE);
+    int valid_items_load = 0;
+    int valid_items_store = 0;
+    const int base_idx = (blockIdx.x * TILE_SIZE);
+
+    T vals[NUM_PER_TH * ((DATA_TYPE > 0) ? 2 : 1)];
+    unsigned char qvalsA[NUM_PER_TH];
+    unsigned char qvalsB[NUM_PER_TH];
+    float local_abs_max = 1.0f;
+
+    typedef cub::BlockLoad<unsigned char, THREADS, NUM_PER_TH, cub::BLOCK_LOAD_WARP_TRANSPOSE> LoadChar;
+    typedef cub::BlockStore<T, THREADS, NUM_PER_TH*((DATA_TYPE > 0) ? 2 : 1), cub::BLOCK_STORE_WARP_TRANSPOSE> StoreT;
+
+    __shared__ typename LoadChar::TempStorage loadcharA;
+    __shared__ typename LoadChar::TempStorage loadcharB;
+    __shared__ typename StoreT::TempStorage storet;
+
+    for (int i = base_idx; i < n_load; i += gridDim.x * TILE_SIZE) {
+        if (DATA_TYPE > 0) {
+            // Cast n to int64_t to avoid overflow for large n
+            valid_items_load = min(TILE_SIZE, static_cast<int>((static_cast<int64_t>(n) + 1) / 2) - i);
+            valid_items_store = min(TILE_SIZE * 2, n - i * 2);
+        } else {
+            valid_items_load = min(TILE_SIZE, n - i);
+            valid_items_store = valid_items_load;
+        }
+
+        // Since blocksize will always be a power-of-2, we avoid more expensive
+        // division by the blocksize and instead use a shift operation.
+        // This is equivalent to (i+threadId.x*NUM_PER_TH)/blocksize.
+        //local_abs_max = __ldg(&absmax_a[(i + threadIdx.x * NUM_PER_TH) >> (31 - __clz(blocksize))]) *
+        //                 __ldg(&absmax_b[(i + threadIdx.x * NUM_PER_TH) >> (31 - __clz(blocksize))]);
+        //__syncthreads();
+        LoadChar(loadcharA).Load(&(A[i]), qvalsA, valid_items_load, 128);
+        LoadChar(loadcharB).Load(&(B[i]), qvalsB, valid_items_load, 128);
+
+        switch (DATA_TYPE) {
+        case General8bit:
+            assert(false);
+            break;
+        case FP4:
+            assert(false);
+            break;
+        case NF4:
+#pragma unroll NUM_PER_TH
+            for (int j = 0; j < NUM_PER_TH; j++) {
+                vals[j * 2] =
+                    dDequantizeEWM_NF4(qvalsA[j] >> 4, qvalsB[j] >> 4) * local_abs_max;
+
+                vals[j * 2 + 1] =
+                    dDequantizeEWM_NF4(qvalsA[j] & 0x0F, qvalsB[j] & 0x0F) * local_abs_max;
+            }
+        
+            break;
+        }
+
+        __syncthreads();
+        StoreT(storet).Store(&(out[(DATA_TYPE > 0) ? i * 2 : i]), vals, valid_items_store);
     }
 }
 
@@ -2365,6 +2477,20 @@ template __global__ void
     kPercentileClipping<float, 2048, 4>(float* __restrict__ g, float* gnorm_vec, int step, const int n);
 template __global__ void
     kPercentileClipping<half, 2048, 4>(half* __restrict__ g, float* gnorm_vec, int step, const int n);
+
+//#define MAKE_kEWMultiplicationBlockwise(dtype, blocksize, num_per_thread, stochastic, data_type_name)                          \
+//    template __global__ void kEWMultiplicationBlockwise<dtype, blocksize, num_per_thread, stochastic, data_type_name>(         \
+//        float* code, unsigned char* A, float* absmax_a, unsigned char* B, float* absmax_b, dtype* out, const int blocksize, const int n );
+
+//MAKE_kEWMultiplicationBlockwise(float, 512, 64, 8, NF4)
+//MAKE_kEWMultiplicationBlockwise(half, 512, 64, 8, NF4)
+
+template __global__ void kEWMultiplicationBlockwise<half, 512, 64, 8, NF4>(
+    float* code, unsigned char* A, float* absmax_a, unsigned char* B, float* absmax_b, half* out, const int blocksize, const int n
+);
+template __global__ void kEWMultiplicationBlockwise<float, 512, 64, 8, NF4>(
+    float* code, unsigned char* A, float* absmax_a, unsigned char* B, float* absmax_b, float* out, const int blocksize, const int n
+);
 
 #define MAKE_kQuantizeBlockwise(dtype, blocksize, num_per_thread, stochastic, data_type_name)                          \
     template __global__ void kQuantizeBlockwise<dtype, blocksize, num_per_thread, stochastic, data_type_name>(         \

@@ -320,6 +320,50 @@ def _(
 
     return _dequantize_4bit_impl(A, absmax, blocksize, quant_type, shape, dtype)
 
+@register_kernel("bitsandbytes::multiply_4bit", "default")
+def _(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: torch.Tensor,
+    absmaxB: torch.Tensor,
+    blocksize: int,
+    quant_type: str,
+    shape: Sequence[int],
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    out = torch.empty(shape, dtype=dtype, device=A.device)
+    _multiply_4bit_impl(A, B, absmaxA, absmaxB, blocksize, quant_type, dtype, out=out)
+    return out
+
+
+@register_kernel("bitsandbytes::multiply_4bit.out", "default")
+def _(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: torch.Tensor,
+    absmaxB: torch.Tensor,
+    blocksize: int,
+    quant_type: str,
+    shape: Sequence[int],
+    dtype: torch.dtype,
+    out: torch.Tensor,
+) -> None:
+    torch._check(out.shape == shape, lambda: f"Expected out.shape == {shape}, got {out.shape}")
+    torch._check(out.dtype == dtype, lambda: f"Expected out.dtype == {dtype}, got {out.dtype}")
+    _multiply_4bit_impl(A, B, absmaxA, absmaxB, blocksize, quant_type, dtype, out=out)
+
+
+def _multiply_4bit_impl(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: torch.Tensor,
+    absmaxB: torch.Tensor,
+    blocksize: int,
+    quant_type: str,
+    dtype: torch.dtype,
+    out: torch.Tensor,
+) -> None:
+    return None
 
 @register_kernel("bitsandbytes::gemv_4bit", "default")
 def _(

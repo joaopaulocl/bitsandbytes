@@ -73,6 +73,24 @@ void dequantizeBlockwise(
     CUDA_CHECK_RETURN(cudaPeekAtLastError());
 }
 
+template <typename T, int DATA_TYPE>
+void multiplyBlockwise(
+    float* code, unsigned char* A, float* absmaxA,  unsigned char* B, float* absmaxB, T* out, int blocksize, const int n, cudaStream_t stream
+) {
+    constexpr int tile_size = (DATA_TYPE > 0) ? 1024 : 512;
+
+    // Upcast to int64 to avoid overflow for large n
+    int grid_blocks = ((int64_t)n + tile_size - 1) / tile_size;
+
+    if (DATA_TYPE > 0)
+        kEWMultiplicationBlockwise<T, 512, 64, 8, DATA_TYPE>
+            <<<grid_blocks, 64, 0, stream>>>(code, A, absmaxA, B, absmaxB, out, blocksize / 2, n);
+    else
+        kEWMultiplicationBlockwise<T, 512, 64, 8, DATA_TYPE>
+            <<<grid_blocks, 64, 0, stream>>>(code, A, absmaxA, B, absmaxB, out, blocksize / 2, n);
+    CUDA_CHECK_RETURN(cudaPeekAtLastError());
+}
+
 template <typename T, int OPTIMIZER>
 void optimizer32bit(
     T* g, T* p, float* state1, float* state2, float* unorm, float max_unorm, float param_norm, const float beta1,
@@ -555,6 +573,13 @@ template void quantizeBlockwise<__nv_bfloat16, 0, FP4>(
 template void quantizeBlockwise<__nv_bfloat16, 0, NF4>(
     float* code, __nv_bfloat16* A, float* absmax, unsigned char* out, float* rand, int rand_offset, int blocksize,
     const int n
+);
+
+template void multiplyBlockwise<float, NF4>(
+    float* code, unsigned char* A, float* absmaxA, unsigned char* B, float* absmaxB, float* out, int blocksize, const int n, cudaStream_t stream
+);
+template void multiplyBlockwise<half, NF4>(
+    float* code, unsigned char* A, float* absmaxA, unsigned char* B, float* absmaxB, half* out, int blocksize, const int n, cudaStream_t stream
 );
 
 template void dequantizeBlockwise<float, General8bit>(

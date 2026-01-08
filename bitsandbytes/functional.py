@@ -796,6 +796,20 @@ def get_4bit_type(typename, device=None, blocksize=64):
 
     return data
 
+def nf4_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """
+    Matrix multiplication C = A @ B using NF4 × NF4 multiplication via LUT.
+
+    A: (M, K//2) uint8 NF4-encoded
+    B: (K//2, N) uint8 NF4-encoded
+    Returns:
+        C: (M, N) float
+    """
+    M = A.shape[0]
+    K = A.shape[1] * 2  # * 2 if we are storing 2 NF4 values per byte
+    N = B.shape[1]
+    return torch.ops.bitsandbytes.nf4_matmul.default(A, B, M, N, K)
+
 def multiply_nf4(
     A: torch.Tensor,
     B: torch.Tensor,

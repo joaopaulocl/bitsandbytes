@@ -365,6 +365,30 @@ def _multiply_4bit_impl(
 ) -> None:
     return None
 
+
+@register_kernel("bitsandbytes::nf4_matmul", "default")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    # CPU implementation in Python
+    '''C = torch.zeros((M, N), dtype=torch.float32)
+    for i in range(M):
+        for j in range(N):
+            sum_val = 0.0
+            for k in range(K):
+                # Unpack A[i][k]
+                a_byte = A[i, k // 2]
+                a_val = (a_byte >> 4) if k % 2 == 0 else (a_byte & 0x0F)
+                # Unpack B[k][j]
+                b_byte = B[k // 2, j]
+                b_val = (b_byte >> 4) if k % 2 == 0 else (b_byte & 0x0F)
+                # Simple multiply, ignoring the LUT for now
+                # In real NF4, use dequant
+                # But for test, use the values as is
+                sum_val += a_val * b_val
+            C[i, j] = sum_val
+    return C'''
+    return None
+
+
 @register_kernel("bitsandbytes::gemv_4bit", "default")
 def _(
     A: torch.Tensor,

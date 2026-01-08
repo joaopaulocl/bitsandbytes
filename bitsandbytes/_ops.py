@@ -284,6 +284,17 @@ def _(A: torch.Tensor, B: torch.Tensor, absmaxA: torch.Tensor, absmaxB: torch.Te
     torch._check(out.device == A.device, lambda: f"Expected out.device == {A.device}, got {out.device}")
     torch._check(out.dtype == dtype, lambda: f"Expected out.dtype == {dtype}, got {out.dtype}")
 
+torch.library.define(
+    "bitsandbytes::nf4_matmul",
+    "(Tensor A, Tensor B, int M, int N, int K) -> Tensor",
+)
+
+@register_fake("bitsandbytes::nf4_matmul")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    torch._check(A.dtype == torch.uint8, lambda: f"A must be uint8, got {A.dtype}")
+    torch._check(B.dtype == torch.uint8, lambda: f"B must be uint8, got {B.dtype}")
+    return torch.empty((M, N), dtype=torch.float32, device=A.device)
+
 torch.library.define("bitsandbytes::quantize_blockwise", "(Tensor A, Tensor code, int blocksize) -> (Tensor, Tensor)")
 
 

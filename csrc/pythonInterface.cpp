@@ -400,6 +400,18 @@ void multiplyBlockwise_fp32_nf4(
     multiplyBlockwise<float, NF4>(code, A, absmaxA, B, absmaxB, out, blocksize, n, stream);
 }
 
+void cnf4_matmul_fp32(unsigned char* A, unsigned char* B, float* C, int M, int N, int K, cudaStream_t stream) {
+    nf4_matmul(A, B, C, M, N, K, stream);
+}
+
+/*void cnf4_matmul_fp16(unsigned char* A, unsigned char* B, half* C, int M, int N, int K, cudaStream_t stream) {
+    nf4_matmul(A, B, C, M, N, K, stream);
+}
+
+void cnf4_matmul_bf16(unsigned char* A, unsigned char* B, __nv_bfloat16* C, int M, int N, int K, cudaStream_t stream) {
+    nf4_matmul(A, B, C, M, N, K, stream);
+}*/
+
 void cdequantize(float* code, unsigned char* A, float* out, int n, cudaStream_t stream) {
     dequantize(code, A, out, n, stream);
 }

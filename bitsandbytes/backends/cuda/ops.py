@@ -372,7 +372,7 @@ def _(
     dtype: torch.dtype,
     out: torch.Tensor,
 ) -> None:
-    torch._check(out.shape == shape, lambda: f"Expected out.shape == {shape}, got {out.shape}")
+    torch._check(out.shape == torch.Size(shape), lambda: f"Expected out.shape == {shape}, got {out.shape}")
     torch._check(out.dtype == dtype, lambda: f"Expected out.dtype == {dtype}, got {out.dtype}")
     _dequantize_4bit_impl(A, absmax, blocksize, quant_type, dtype, out=out)
 
@@ -496,6 +496,35 @@ def _multiply_4bit_impl(
             
         elif out.dtype == torch.float32:
             lib.multiplyBlockwise_fp32_nf4(*args)
+
+
+@register_kernel("bitsandbytes::nf4_matmul", "cuda")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    out = torch.empty((M, N), dtype=torch.float32, device=A.device)
+    _nf4_matmul_impl(A, B, M, N, K, out)
+    return out
+
+
+def _nf4_matmul_impl(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int, out: torch.Tensor) -> None:
+    torch._check(A.dtype == torch.uint8, lambda: f"A must be uint8, got {A.dtype}")
+    torch._check(B.dtype == torch.uint8, lambda: f"B must be uint8, got {B.dtype}")
+    torch._check(out.dtype in [torch.bfloat16, torch.float16, torch.float32], lambda: f"out must be torch.bfloat16, torch.float16, torch.float32, got {out.dtype}")
+    torch._check(A.shape == (M, K // 2), lambda: f"A.shape must be ({M}, {K // 2}), got {A.shape}")
+    torch._check(B.shape == (K // 2, N) or B.shape == ((K // 2) * N, 1), lambda: f"B.shape must be ({K // 2}, {N}) or ({(K // 2)*N}, {1}), got {B.shape}")
+    torch._check(out.shape == (M, N), lambda: f"out.shape must be ({M}, {N}), got {out.shape}")
+
+    with _cuda_device_of(A):
+        # todo: support bf16 and fp16 output
+        lib.cnf4_matmul_fp32(
+            get_ptr(A),
+            get_ptr(B),
+            get_ptr(out),
+            ct.c_int(M),
+            ct.c_int(N),
+            ct.c_int(K),
+            _get_tensor_stream(A),
+        )
+
 
 
 @register_kernel("bitsandbytes::gemv_4bit", "cuda")

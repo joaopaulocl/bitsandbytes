@@ -796,7 +796,11 @@ def get_4bit_type(typename, device=None, blocksize=64):
 
     return data
 
-def nf4_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+def nf4_matmul(
+        A: torch.Tensor, 
+        B: torch.Tensor, 
+        absmaxA: Optional[torch.Tensor] = None, 
+        absmaxB: Optional[torch.Tensor] = None) -> torch.Tensor:
     """
     Matrix multiplication C = A @ B using NF4 × NF4 multiplication via LUT.
 

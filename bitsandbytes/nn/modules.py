@@ -558,7 +558,6 @@ class Linear4bit(nn.Linear):
         weight = self.weight if getattr(quant_state, "packing_format_for_cpu", False) else self.weight.t()
  
         out = bnb.matmul_4bit(x, weight, bias=bias, quant_state=quant_state).to(inp_dtype)
-        print(out.flatten()[:10])
         return out
 
 class Linear4bitFakeQuantAct(Linear4bit):
@@ -598,8 +597,11 @@ class Linear4bitFakeQuantAct(Linear4bit):
         return dequantize_blockwise(q, quant_state=quant_state)
 
     def forward(self, x: torch.Tensor):
+        print("in", x.shape)
         x = self._fake_quantize_input(x)
-        return super().forward(x)
+        x = super().forward(x)
+        print("out", x.shape)
+        return x
     
 class LinearFP4(Linear4bit):
     """
@@ -700,7 +702,7 @@ class LinearNF4Compute(nn.Linear):
         super().__init__(input_features, output_features, bias, device)
 
         self.weight = Params4bit(
-            self.weight.data.T,
+            self.weight.data,
             requires_grad=False,
             compress_statistics=compress_statistics,
             quant_type="nf4",
@@ -721,8 +723,17 @@ class LinearNF4Compute(nn.Linear):
                 self.compute_dtype = torch.float32
 
     def _quantize_input(self, x: torch.Tensor) -> torch.Tensor:
-        X_nf4, state_nf4 = quantize_4bit(x, blocksize= self.blocksize, quant_type="nf4")
-        return X_nf4.view(x.shape[0], x.shape[1] // 2), state_nf4
+    
+        x_flat = x.view(-1, x.shape[-1])  # shape (4*8, 64)
+        X_nf4, state_nf4 = quantize_4bit(x_flat, blocksize=self.blocksize, quant_type="nf4")
+        
+        # The quantized output should have shape (batch*seq, hidden//2)
+        expected_shape = (x_flat.shape[0], x_flat.shape[1] // 2)
+        if X_nf4.numel() != expected_shape[0] * expected_shape[1]:
+            raise RuntimeError(f"Cannot reshape quantized input of shape {X_nf4.shape} to {expected_shape}")
+
+        X_nf4 = X_nf4.view(*expected_shape)
+        return X_nf4, state_nf4
 
     def forward(self, x: torch.Tensor):
         #fix_4bit_weight_quant_state_from_module(self)
@@ -741,31 +752,28 @@ class LinearNF4Compute(nn.Linear):
         x_quant, x_state = self._quantize_input(x)  
 
         weight_quant = self.weight.data
-    
+
         out = nf4_matmul(x_quant, weight_quant)
         a_absmax = x_state.absmax.reshape(x_state.absmax.shape[0], 1)
         b_absmax = quant_state.absmax.reshape(1, quant_state.absmax.shape[0])
         out = out * (a_absmax * b_absmax)
 
-        #print("shapes:", (a_absmax * b_absmax).shape, out.shape)
-
         if bias is not None:
-            out += bias.to(inp_dtype)
-        #print(out.flatten()[:10])
-        return out
+            out += bias
+        
+        out = out.view(x.shape[0], x.shape[1], self.out_features)
+        return out.to(self.compute_dtype)
 
     def load_state_dict(self, state_dict, strict=True):
         #print("load_state_dict called for LinearNF4Compute - start")
-        # Load the full precision weight into self.weight.data
+        #Load the full precision weight into self.weight.data
         super().load_state_dict(state_dict, strict)
         # Quantize W, the nf4_matmul function expects the weight NOT to be transposed
-        #self.bias = state_dict.get("bias", None)
+        self.bias = state_dict.get("bias", None)
         W = state_dict["weight"]
         q, quant_state = quantize_4bit(W, blocksize=self.blocksize, quant_type="nf4")
-        #print("Quantized weight in LinearNF4Compute during load_state_dict")
-        #print("q.shape:", q.shape)
+
         q = q.view(self.in_features // 2, self.out_features)
-        #print("Reshaped q.shape:", q.shape)
         self.weight.data = q
         self.weight.quant_state = quant_state
         self.weight.bnb_quantized = True
@@ -1254,7 +1262,6 @@ class OutlierAwareLinear(nn.Linear):
             if not tracer.is_initialized():
                 print("Please use OutlierTracer.initialize(model) before using the OutlierAwareLinear layer")
             outlier_idx = tracer.get_outliers(self.weight)
-            # print(outlier_idx, tracer.get_hvalue(self.weight))
             self.outlier_dim = outlier_idx
 
         if not self.is_quantized:

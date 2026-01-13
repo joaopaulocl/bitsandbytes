@@ -467,6 +467,7 @@ class Linear4bit(nn.Linear):
         quant_type="fp4",
         quant_storage=torch.uint8,
         device=None,
+        blocksize: int = 64,
     ):
         """
         Initialize Linear4bit class.
@@ -483,10 +484,11 @@ class Linear4bit(nn.Linear):
         self.weight = Params4bit(
             self.weight.data,
             requires_grad=False,
+            blocksize=blocksize,
             compress_statistics=compress_statistics,
-            quant_type=quant_type,
+            quant_type=quant_type,            
             quant_storage=quant_storage,
-            module=self,
+            module=self,            
         )
         # self.persistent_buffers = []  # TODO consider as way to save quant state
         self.compute_dtype = compute_dtype
@@ -589,6 +591,7 @@ class Linear4bitFakeQuantAct(Linear4bit):
             quant_type=quant_type,
             quant_storage=quant_storage,
             device=device,
+            blocksize=activation_blocksize,
         )
         self.activation_blocksize = activation_blocksize
 
@@ -597,10 +600,8 @@ class Linear4bitFakeQuantAct(Linear4bit):
         return dequantize_blockwise(q, quant_state=quant_state)
 
     def forward(self, x: torch.Tensor):
-        print("in", x.shape)
         x = self._fake_quantize_input(x)
         x = super().forward(x)
-        print("out", x.shape)
         return x
     
 class LinearFP4(Linear4bit):
@@ -770,13 +771,18 @@ class LinearNF4Compute(nn.Linear):
         super().load_state_dict(state_dict, strict)
         # Quantize W, the nf4_matmul function expects the weight NOT to be transposed
         self.bias = state_dict.get("bias", None)
-        W = state_dict["weight"]
-        q, quant_state = quantize_4bit(W, blocksize=self.blocksize, quant_type="nf4")
+        W = state_dict["weight"].contiguous()
+        q, quant_state = quantize_4bit(W, 
+                                       blocksize=self.blocksize, 
+                                       quant_type="nf4", 
+                                       compress_statistics=False, 
+                                       quant_storage=self.quant_storage)
 
         q = q.view(self.in_features // 2, self.out_features)
         self.weight.data = q
         self.weight.quant_state = quant_state
         self.weight.bnb_quantized = True
+        self.weight.module = self
         return
 
 class Int8Params(torch.nn.Parameter):

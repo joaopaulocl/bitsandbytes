@@ -833,6 +833,21 @@ def nf4_matmul_absmax(
     N = B.shape[1]
     return torch.ops.bitsandbytes.nf4_matmul_absmax.default(A, B, absmaxA, absmaxB, blocksize, M, N, K)
 
+
+def set_nf4_ewm_lut(bits: int, device: Optional[torch.device] = None) -> None:
+    if device is None:
+        device = torch.device("cuda")
+    if device.type not in ("cuda", "hip"):
+        raise ValueError(f"device must be CUDA or HIP, got {device}")
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available")
+    if device.type == "hip" and not torch.version.hip:
+        raise RuntimeError("HIP is not available")
+
+    from bitsandbytes.backends.cuda import ops as cuda_ops
+
+    cuda_ops.set_nf4_ewm_lut(bits, device=device)
+
 def multiply_nf4(
     A: torch.Tensor,
     B: torch.Tensor,

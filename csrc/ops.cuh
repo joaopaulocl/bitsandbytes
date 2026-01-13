@@ -115,6 +115,7 @@ void multiplyBlockwise(
 );
 
 void nf4_matmul(unsigned char* A, unsigned char* B, float* C, int M, int N, int K, cudaStream_t stream);
+void set_nf4_ewm_lut(int bits, cudaStream_t stream);
 void nf4_matmul_absmax(
     unsigned char* A,
     unsigned char* B,

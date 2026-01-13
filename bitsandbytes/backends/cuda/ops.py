@@ -586,6 +586,17 @@ def _nf4_matmul_absmax_impl(
         )
 
 
+def set_nf4_ewm_lut(bits: int, device: Optional[torch.device] = None) -> None:
+    if device is None:
+        device = torch.device("cuda")
+    if device.type not in ("cuda", "hip"):
+        raise ValueError(f"device must be CUDA or HIP, got {device}")
+
+    tensor = torch.empty(1, device=device)
+    with _cuda_device_of(tensor):
+        lib.cset_nf4_ewm_lut(ct.c_int(bits), _get_tensor_stream(tensor))
+
+
 
 @register_kernel("bitsandbytes::gemv_4bit", "cuda")
 def _(

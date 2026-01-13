@@ -404,6 +404,10 @@ void cnf4_matmul_fp32(unsigned char* A, unsigned char* B, float* C, int M, int N
     nf4_matmul(A, B, C, M, N, K, stream);
 }
 
+void cset_nf4_ewm_lut(int bits, cudaStream_t stream) {
+    set_nf4_ewm_lut(bits, stream);
+}
+
 void cnf4_matmul_absmax_fp32(
     unsigned char* A,
     unsigned char* B,

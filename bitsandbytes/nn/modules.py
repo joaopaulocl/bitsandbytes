@@ -20,7 +20,7 @@ from bitsandbytes.functional import (
     dequantize_blockwise,
     quantize_4bit,
     quantize_blockwise,
-    nf4_matmul,
+    nf4_matmul_absmax,
     quantize_nf4,
 )
 from bitsandbytes.optim import GlobalOptimManager
@@ -753,11 +753,7 @@ class LinearNF4Compute(nn.Linear):
         x_quant, x_state = self._quantize_input(x)  
 
         weight_quant = self.weight.data
-
-        out = nf4_matmul(x_quant, weight_quant)
-        a_absmax = x_state.absmax.reshape(x_state.absmax.shape[0], 1)
-        b_absmax = quant_state.absmax.reshape(1, quant_state.absmax.shape[0])
-        out = out * (a_absmax * b_absmax)
+        out = nf4_matmul_absmax(x_quant, weight_quant, x_state.absmax, quant_state.absmax, self.blocksize)
 
         if bias is not None:
             out += bias

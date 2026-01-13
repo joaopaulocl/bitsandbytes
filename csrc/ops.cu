@@ -98,6 +98,24 @@ void nf4_matmul(unsigned char* A, unsigned char* B, float* C, int M, int N, int 
     CUDA_CHECK_RETURN(cudaPeekAtLastError());
 }
 
+void nf4_matmul_absmax(
+    unsigned char* A,
+    unsigned char* B,
+    float* absmaxA,
+    float* absmaxB,
+    float* C,
+    int M,
+    int N,
+    int K,
+    int blocksize,
+    cudaStream_t stream
+) {
+    dim3 blockDim(16, 16);
+    dim3 gridDim((N + blockDim.x - 1) / blockDim.x, (M + blockDim.y - 1) / blockDim.y);
+    knf4_matmul_absmax<<<gridDim, blockDim, 0, stream>>>(A, B, absmaxA, absmaxB, C, M, N, K, blocksize);
+    CUDA_CHECK_RETURN(cudaPeekAtLastError());
+}
+
 template <typename T, int OPTIMIZER>
 void optimizer32bit(
     T* g, T* p, float* state1, float* state2, float* unorm, float max_unorm, float param_norm, const float beta1,

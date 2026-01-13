@@ -404,6 +404,21 @@ void cnf4_matmul_fp32(unsigned char* A, unsigned char* B, float* C, int M, int N
     nf4_matmul(A, B, C, M, N, K, stream);
 }
 
+void cnf4_matmul_absmax_fp32(
+    unsigned char* A,
+    unsigned char* B,
+    float* absmaxA,
+    float* absmaxB,
+    float* C,
+    int M,
+    int N,
+    int K,
+    int blocksize,
+    cudaStream_t stream
+) {
+    nf4_matmul_absmax(A, B, absmaxA, absmaxB, C, M, N, K, blocksize, stream);
+}
+
 /*void cnf4_matmul_fp16(unsigned char* A, unsigned char* B, half* C, int M, int N, int K, cudaStream_t stream) {
     nf4_matmul(A, B, C, M, N, K, stream);
 }

@@ -389,6 +389,21 @@ def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
     return None
 
 
+@register_kernel("bitsandbytes::nf4_matmul_absmax", "default")
+def _(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: torch.Tensor,
+    absmaxB: torch.Tensor,
+    blocksize: int,
+    M: int,
+    N: int,
+    K: int,
+) -> torch.Tensor:
+    # CPU implementation in Python
+    return None
+
+
 @register_kernel("bitsandbytes::gemv_4bit", "default")
 def _(
     A: torch.Tensor,

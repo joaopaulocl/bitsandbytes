@@ -526,6 +526,66 @@ def _nf4_matmul_impl(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int, o
         )
 
 
+@register_kernel("bitsandbytes::nf4_matmul_absmax", "cuda")
+def _(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: torch.Tensor,
+    absmaxB: torch.Tensor,
+    blocksize: int,
+    M: int,
+    N: int,
+    K: int,
+) -> torch.Tensor:
+    out = torch.empty((M, N), dtype=torch.float32, device=A.device)
+    _nf4_matmul_absmax_impl(A, B, absmaxA, absmaxB, blocksize, M, N, K, out)
+    return out
+
+
+def _nf4_matmul_absmax_impl(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    absmaxA: torch.Tensor,
+    absmaxB: torch.Tensor,
+    blocksize: int,
+    M: int,
+    N: int,
+    K: int,
+    out: torch.Tensor,
+) -> None:
+    torch._check(A.dtype == torch.uint8, lambda: f"A must be uint8, got {A.dtype}")
+    torch._check(B.dtype == torch.uint8, lambda: f"B must be uint8, got {B.dtype}")
+    torch._check(absmaxA.dtype == torch.float32, lambda: f"absmaxA must be float32, got {absmaxA.dtype}")
+    torch._check(absmaxB.dtype == torch.float32, lambda: f"absmaxB must be float32, got {absmaxB.dtype}")
+    torch._check_is_size(blocksize)
+    if ROCM_WARP_SIZE_64:
+        torch._check(blocksize in [4096, 2048, 1024, 512, 256, 128])
+    else:
+        torch._check(blocksize in [4096, 2048, 1024, 512, 256, 128, 64])
+    torch._check(out.dtype in [torch.bfloat16, torch.float16, torch.float32], lambda: f"out must be torch.bfloat16, torch.float16, torch.float32, got {out.dtype}")
+    torch._check(A.shape == (M, K // 2), lambda: f"A.shape must be ({M}, {K // 2}), got {A.shape}")
+    torch._check(B.shape == (K // 2, N) or B.shape == ((K // 2) * N, 1), lambda: f"B.shape must be ({K // 2}, {N}) or ({(K // 2)*N}, {1}), got {B.shape}")
+    torch._check(out.shape == (M, N), lambda: f"out.shape must be ({M}, {N}), got {out.shape}")
+
+    with _cuda_device_of(A):
+        # todo: support bf16 and fp16 output
+        blocks_per_row = (K + blocksize - 1) // blocksize
+        torch._check(absmaxA.numel() == M * blocks_per_row, lambda: f"absmaxA.numel() must be {M * blocks_per_row}, got {absmaxA.numel()}")
+        torch._check(absmaxB.numel() == N * blocks_per_row, lambda: f"absmaxB.numel() must be {N * blocks_per_row}, got {absmaxB.numel()}")
+        lib.cnf4_matmul_absmax_fp32(
+            get_ptr(A),
+            get_ptr(B),
+            get_ptr(absmaxA),
+            get_ptr(absmaxB),
+            get_ptr(out),
+            ct.c_int(M),
+            ct.c_int(N),
+            ct.c_int(K),
+            ct.c_int(blocksize),
+            _get_tensor_stream(A),
+        )
+
+
 
 @register_kernel("bitsandbytes::gemv_4bit", "cuda")
 def _(

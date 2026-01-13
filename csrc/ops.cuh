@@ -115,6 +115,18 @@ void multiplyBlockwise(
 );
 
 void nf4_matmul(unsigned char* A, unsigned char* B, float* C, int M, int N, int K, cudaStream_t stream);
+void nf4_matmul_absmax(
+    unsigned char* A,
+    unsigned char* B,
+    float* absmaxA,
+    float* absmaxB,
+    float* C,
+    int M,
+    int N,
+    int K,
+    int blocksize,
+    cudaStream_t stream
+);
 
 void quantize(float* code, float* A, unsigned char* out, int n);
 void dequantize(float* code, unsigned char* A, float* out, int n, cudaStream_t stream);

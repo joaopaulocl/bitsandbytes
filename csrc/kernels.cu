@@ -2407,6 +2407,44 @@ __global__ void knf4_matmul(unsigned char* A, unsigned char* B, float* C, int M,
     C[i * N + j] = sum;
 }
 
+__global__ void knf4_matmul_absmax(
+    unsigned char* A,
+    unsigned char* B,
+    const float* absmaxA,
+    const float* absmaxB,
+    float* C,
+    int M,
+    int N,
+    int K,
+    int blocksize
+) {
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= M || j >= N) return;
+
+    const int blocks_per_row = (K + blocksize - 1) / blocksize;
+    const int blocksize_shift = 31 - __clz(blocksize);
+
+    float sum = 0.0f;
+    for (int k = 0; k < K; k++) {
+        int a_idx = i * (K / 2) + (k / 2);
+        unsigned char a_byte = A[a_idx];
+        unsigned char a_val = (k % 2 == 0) ? (a_byte >> 4) : (a_byte & 0x0F);
+
+        int b_idx = j * (K / 2) + (k / 2);
+        unsigned char b_byte = B[b_idx];
+        unsigned char b_val = (k % 2 == 0) ? (b_byte >> 4) : (b_byte & 0x0F);
+
+        int block_idx = k >> blocksize_shift;
+        int absmax_a_idx = i * blocks_per_row + block_idx;
+        int absmax_b_idx = j * blocks_per_row + block_idx;
+        float local_absmax = __ldg(&absmaxA[absmax_a_idx]) * __ldg(&absmaxB[absmax_b_idx]);
+
+        sum += dDequantizeEWM_NF4(a_val, b_val) * local_absmax;
+    }
+    C[i * N + j] = sum;
+}
+
 template __global__ void kgemm_4bit_inference_naive<half, 128, 16>(
     int M, int N, int K, half* __restrict__ const A, unsigned char* B, float* absmax, const float* datatype, half* out,
     int lda, int ldb, int ldc, int blocksize

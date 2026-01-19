@@ -596,8 +596,8 @@ class Linear4bitFakeQuantAct(Linear4bit):
         self.activation_blocksize = activation_blocksize
 
     def _fake_quantize_input(self, x: torch.Tensor) -> torch.Tensor:
-        q, quant_state = quantize_blockwise(x, blocksize=self.activation_blocksize)
-        return dequantize_blockwise(q, quant_state=quant_state)
+        q, quant_state = bnb.functional.quantize_4bit(x, blocksize=self.activation_blocksize, quant_type="nf4") 
+        return bnb.functional.dequantize_4bit(q, quant_state=quant_state) 
 
     def forward(self, x: torch.Tensor):
         x = self._fake_quantize_input(x)

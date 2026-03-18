@@ -126,9 +126,21 @@ __global__ void kgemm_4bit_inference_naive(
 
 template <typename T, int FUNC> __global__ void kfunc(T* A, T* B, T value, long n);
 
-// NF4 matrix multiplication kernel
+// NF4 matrix multiplication kernels
 __global__ void knf4_matmul(unsigned char* A, unsigned char* B, float* C, int M, int N, int K);
+__global__ void knf4_matmul_v2(unsigned char* A, unsigned char* B, float* C, int M, int N, int K);
 __global__ void knf4_matmul_absmax(
+    unsigned char* A,
+    unsigned char* B,
+    const float* absmaxA,
+    const float* absmaxB,
+    float* C,
+    int M,
+    int N,
+    int K,
+    int blocksize
+);
+__global__ void knf4_matmul_absmax_v2(
     unsigned char* A,
     unsigned char* B,
     const float* absmaxA,

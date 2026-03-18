@@ -2526,24 +2526,94 @@ __global__ void knf4_matmul(unsigned char* A, unsigned char* B, float* C, int M,
     int i = blockIdx.y * blockDim.y + threadIdx.y;
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= M || j >= N) return;
-    
+
     float sum = 0.0f;
     for (int k = 0; k < K; k++) {
         // Unpack A[i][k]
         int a_idx = i * (K / 2) + (k / 2);
         unsigned char a_byte = A[a_idx];
         unsigned char a_val = (k % 2 == 0) ? (a_byte >> 4) : (a_byte & 0x0F);
-        
+
         // Unpack B[k][j]
         // int b_idx = (k / 2) * N + j;
         // Unpack B[j][k] since B is transposed
         int b_idx = j * (K / 2) + (k / 2);
         unsigned char b_byte = B[b_idx];
         unsigned char b_val = (k % 2 == 0) ? (b_byte >> 4) : (b_byte & 0x0F);
-        
+
         sum += dDequantizeEWM_NF4(a_val, b_val);
     }
     C[i * N + j] = sum;
+}
+
+// ── Fix-2: tiled knf4_matmul with shared-memory and coalesced B loads ────────
+// NF4_TILE_K=32 logical k values per outer step = 16 packed bytes per thread.
+// dDequantizeEWM_NF4(a,b) = nf4(a)*nf4(b) is separable, so each tile dequantizes
+// A and B independently into float shared memory; the inner loop is pure FMA.
+//
+// Shared-memory layout (total ≈ 4.1 KB, no bank conflicts):
+//   As[16][32]   — dequantized A tile, thread (ty,tx) loads row ty
+//   Bs[32][17]   — dequantized B tile, transposed (+1 pad), thread (ty,tx) loads col ty
+//
+// Global-memory access:
+//   A load: A[i, k0p+tx]        — consecutive tx → coalesced ✓
+//   B load: B[j_base+ty, k0p+tx] — consecutive tx → coalesced ✓
+//
+// Bank-conflict analysis for Bs[32][17]:
+//   inner-loop read  Bs[k][tx=0..15]: indices k*17+0..15 → 16 distinct banks ✓
+//   transposed store Bs[2*tx][ty]:    banks {2k mod 32} for ty=0, {2k+1} for ty=1 ✓
+//   transposed store Bs[2*tx+1][ty]:  banks {(34k+17) mod 32} — all distinct ✓
+
+#define NF4_TILE_K 32  // logical k per outer step (= 16 packed bytes × 2 nibbles)
+
+__global__ void knf4_matmul_v2(unsigned char* A, unsigned char* B, float* C, int M, int N, int K) {
+    __shared__ float As[16][NF4_TILE_K];
+    __shared__ float Bs[NF4_TILE_K][17];  // transposed; +1 column avoids bank conflicts
+
+    int ty = threadIdx.y, tx = threadIdx.x;   // both in [0, 15]
+    int i  = blockIdx.y * 16 + ty;            // output row
+    int j  = blockIdx.x * 16 + tx;            // output col
+
+    float acc   = 0.0f;
+    int K_packed = K >> 1;
+
+    for (int k0 = 0; k0 < K; k0 += NF4_TILE_K) {
+        int k0p = k0 >> 1;       // packed-byte offset of this tile
+        int kp  = k0p + tx;      // this thread's packed-byte column
+
+        // ── A tile: A[i, k0p+tx] — coalesced in tx ───────────────────────────
+        if (i < M && kp < K_packed) {
+            unsigned char a_byte  = A[i * K_packed + kp];
+            As[ty][tx * 2]     = dDequantizeNF4(a_byte >> 4);
+            As[ty][tx * 2 + 1] = dDequantizeNF4(a_byte & 0x0F);
+        } else {
+            As[ty][tx * 2]     = 0.0f;
+            As[ty][tx * 2 + 1] = 0.0f;
+        }
+
+        // ── B tile: B[j_base+ty, k0p+tx] — coalesced in tx ──────────────────
+        // Stored transposed as Bs[2*tx][ty] / Bs[2*tx+1][ty] so the inner loop
+        // reads Bs[k][tx] for consecutive tx (no bank conflicts, see above).
+        int j_load = blockIdx.x * 16 + ty;
+        if (j_load < N && kp < K_packed) {
+            unsigned char b_byte  = B[j_load * K_packed + kp];
+            Bs[tx * 2][ty]     = dDequantizeNF4(b_byte >> 4);
+            Bs[tx * 2 + 1][ty] = dDequantizeNF4(b_byte & 0x0F);
+        } else {
+            Bs[tx * 2][ty]     = 0.0f;
+            Bs[tx * 2 + 1][ty] = 0.0f;
+        }
+        __syncthreads();
+
+        if (i < M && j < N) {
+            #pragma unroll
+            for (int k = 0; k < NF4_TILE_K; k++)
+                acc += As[ty][k] * Bs[k][tx];
+        }
+        __syncthreads();
+    }
+
+    if (i < M && j < N) C[i * N + j] = acc;
 }
 
 __global__ void knf4_matmul_absmax(
@@ -2582,6 +2652,79 @@ __global__ void knf4_matmul_absmax(
         sum += dDequantizeEWM_NF4(a_val, b_val) * local_absmax;
     }
     C[i * N + j] = sum;
+}
+
+// ── Fix-2: tiled knf4_matmul_absmax ──────────────────────────────────────────
+// The absmax scale is separable:
+//   dDequantizeEWM_NF4(a,b) * absmaxA[i,blk] * absmaxB[j,blk]
+//     = (nf4(a) * absmaxA[i,blk]) * (nf4(b) * absmaxB[j,blk])
+// so we bake each absmax into the dequantized value at tile-load time.
+// Both nibbles of a packed byte share the same absmax block (blocksize >= 2).
+// Inner loop is identical to knf4_matmul_v2: pure FMA, no LUT, no L2 absmax reads.
+
+__global__ void knf4_matmul_absmax_v2(
+    unsigned char* A,
+    unsigned char* B,
+    const float* absmaxA,
+    const float* absmaxB,
+    float* C,
+    int M,
+    int N,
+    int K,
+    int blocksize
+) {
+    __shared__ float As[16][NF4_TILE_K];
+    __shared__ float Bs[NF4_TILE_K][17];
+
+    int ty = threadIdx.y, tx = threadIdx.x;
+    int i  = blockIdx.y * 16 + ty;
+    int j  = blockIdx.x * 16 + tx;
+
+    const int blocks_per_row = (K + blocksize - 1) / blocksize;
+    const int blocksize_shift = 31 - __clz(blocksize);
+    int K_packed = K >> 1;
+
+    float acc = 0.0f;
+
+    for (int k0 = 0; k0 < K; k0 += NF4_TILE_K) {
+        int k0p = k0 >> 1;
+        int kp  = k0p + tx;
+
+        // ── A tile ───────────────────────────────────────────────────────────
+        if (i < M && kp < K_packed) {
+            unsigned char a_byte = A[i * K_packed + kp];
+            int block_idx = (k0 + tx * 2) >> blocksize_shift;
+            float sa = __ldg(&absmaxA[i * blocks_per_row + block_idx]);
+            As[ty][tx * 2]     = dDequantizeNF4(a_byte >> 4)   * sa;
+            As[ty][tx * 2 + 1] = dDequantizeNF4(a_byte & 0x0F) * sa;
+        } else {
+            As[ty][tx * 2]     = 0.0f;
+            As[ty][tx * 2 + 1] = 0.0f;
+        }
+
+        // ── B tile (transposed) ───────────────────────────────────────────────
+        int j_load = blockIdx.x * 16 + ty;
+        if (j_load < N && kp < K_packed) {
+            unsigned char b_byte = B[j_load * K_packed + kp];
+            int block_idx = (k0 + tx * 2) >> blocksize_shift;
+            float sb = __ldg(&absmaxB[j_load * blocks_per_row + block_idx]);
+            Bs[tx * 2][ty]     = dDequantizeNF4(b_byte >> 4)   * sb;
+            Bs[tx * 2 + 1][ty] = dDequantizeNF4(b_byte & 0x0F) * sb;
+        } else {
+            Bs[tx * 2][ty]     = 0.0f;
+            Bs[tx * 2 + 1][ty] = 0.0f;
+        }
+        __syncthreads();
+
+        if (i < M && j < N) {
+            #pragma unroll
+            for (int k = 0; k < NF4_TILE_K; k++)
+                acc += As[ty][k] * Bs[k][tx];
+        }
+        __syncthreads();
+    }
+
+    if (i < M && j < N) C[i * N + j] = acc;
 }
 
 // ── Approximate FP matmul kernels ────────────────────────────────────────────

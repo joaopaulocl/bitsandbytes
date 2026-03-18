@@ -119,7 +119,7 @@ void multiplyBlockwise(
 void nf4_matmul(unsigned char* A, unsigned char* B, float* C, int M, int N, int K, cudaStream_t stream) {
     dim3 blockDim(16, 16);
     dim3 gridDim((N + blockDim.x - 1) / blockDim.x, (M + blockDim.y - 1) / blockDim.y);
-    knf4_matmul<<<gridDim, blockDim, 0, stream>>>(A, B, C, M, N, K);
+    knf4_matmul_v2<<<gridDim, blockDim, 0, stream>>>(A, B, C, M, N, K);
     CUDA_CHECK_RETURN(cudaPeekAtLastError());
 }
 
@@ -188,7 +188,7 @@ void nf4_matmul_absmax(
 ) {
     dim3 blockDim(16, 16);
     dim3 gridDim((N + blockDim.x - 1) / blockDim.x, (M + blockDim.y - 1) / blockDim.y);
-    knf4_matmul_absmax<<<gridDim, blockDim, 0, stream>>>(A, B, absmaxA, absmaxB, C, M, N, K, blocksize);
+    knf4_matmul_absmax_v2<<<gridDim, blockDim, 0, stream>>>(A, B, absmaxA, absmaxB, C, M, N, K, blocksize);
     CUDA_CHECK_RETURN(cudaPeekAtLastError());
 }
 

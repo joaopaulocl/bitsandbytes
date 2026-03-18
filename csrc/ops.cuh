@@ -116,6 +116,7 @@ void multiplyBlockwise(
 
 void nf4_matmul(unsigned char* A, unsigned char* B, float* C, int M, int N, int K, cudaStream_t stream);
 void set_nf4_ewm_lut(int bits, cudaStream_t stream);
+void set_nf4_ewm_lut_data(const float* lut, cudaStream_t stream);
 void nf4_matmul_absmax(
     unsigned char* A,
     unsigned char* B,
@@ -128,6 +129,12 @@ void nf4_matmul_absmax(
     int blocksize,
     cudaStream_t stream
 );
+
+// Approximate FP matmul wrappers (B pre-transposed, output float32)
+void fp32_approx_matmul(float* A, float* B, float* C, int M, int N, int K, cudaStream_t stream);
+void fp16_approx_matmul(__half* A, __half* B, float* C, int M, int N, int K, cudaStream_t stream);
+void fp8_e4m3_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K, cudaStream_t stream);
+void fp8_e5m2_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K, cudaStream_t stream);
 
 void quantize(float* code, float* A, unsigned char* out, int n);
 void dequantize(float* code, unsigned char* A, float* out, int n, cudaStream_t stream);

@@ -22,6 +22,10 @@ from bitsandbytes.functional import (
     quantize_blockwise,
     nf4_matmul_absmax,
     quantize_nf4,
+    fp32_approx_matmul,
+    fp16_approx_matmul,
+    fp8_e4m3_approx_matmul,
+    fp8_e5m2_approx_matmul,
 )
 from bitsandbytes.optim import GlobalOptimManager
 from bitsandbytes.utils import INVERSE_LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING, OutlierTracer
@@ -780,6 +784,131 @@ class LinearNF4Compute(nn.Linear):
         self.weight.bnb_quantized = True
         self.weight.module = self
         return
+
+
+class _LinearApproxBase(nn.Linear):
+    """Base class for approximate-matmul linear layers.
+
+    Subclasses implement ``_approx_matmul(x_2d, w) -> (M, N) float32``
+    where ``x_2d`` is shape ``(M, K)`` and ``w`` is shape ``(N, K)``
+    (i.e. the weight is NOT transposed, matching the approx kernel convention).
+    """
+
+    # Override in subclasses to control how the weight is stored.
+    _weight_dtype: Optional[torch.dtype] = None
+
+    def __init__(self, in_features: int, out_features: int, bias: bool = True, device=None):
+        super().__init__(in_features, out_features, bias, device)
+        if self._weight_dtype is not None:
+            self.weight = nn.Parameter(
+                self.weight.data.to(self._weight_dtype), requires_grad=False
+            )
+
+    def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        inp_dtype = x.dtype
+        orig_shape = x.shape
+        x_2d = x.reshape(-1, x.shape[-1])  # (M, K)
+
+        out = self._approx_matmul(x_2d, self.weight)  # (M, N) float32
+
+        out = out.view(*orig_shape[:-1], self.out_features)
+        if self.bias is not None:
+            out = out + self.bias.to(out.dtype)
+        return out.to(inp_dtype)
+
+
+class LinearApproxFP32(_LinearApproxBase):
+    """Linear layer whose matmul is computed with the approximate FP32 kernel.
+
+    FPMul(x, y) = sign(x)·sign(y) · (1 + x_m + y_m + 2^-4) · 2^(x_e + y_e)
+    (correction 2^-4 because FP32 has 23 mantissa bits, l(23)=4)
+
+    Weights are stored in FP32.  Input is cast to FP32 before the kernel.
+    Output is cast back to the original input dtype.
+    """
+    _weight_dtype = torch.float32
+
+    def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        return fp32_approx_matmul(x_2d.float(), w.float())
+
+
+class LinearApproxFP16(_LinearApproxBase):
+    """Linear layer whose matmul is computed with the approximate FP16 kernel.
+
+    FPMul(x, y) = sign(x)·sign(y) · (1 + x_m + y_m + 2^-4) · 2^(x_e + y_e)
+    (correction 2^-4 because FP16 has 10 mantissa bits, l(10)=4)
+
+    Weights are stored in FP16.  Input is cast to FP16 before the kernel.
+    Output is cast back to the original input dtype.
+    """
+    _weight_dtype = torch.float16
+
+    def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        return fp16_approx_matmul(x_2d.half(), w.half())
+
+
+class LinearApproxFP8E4M3(_LinearApproxBase):
+    """Linear layer whose matmul is computed with the approximate FP8 e4m3fn kernel.
+
+    FPMul(x, y) = sign(x)·sign(y) · (1 + x_m + y_m + 2^-3) · 2^(x_e + y_e)
+    (correction 2^-3 because FP8-e4m3 has 3 mantissa bits, l(3)=3)
+
+    Weights are stored in ``torch.float8_e4m3fn``.
+    Input is cast to FP8-e4m3fn before the kernel.
+    Output (float32) is cast back to the original input dtype.
+    """
+    _weight_dtype = torch.float8_e4m3fn
+
+    def __init__(self, in_features: int, out_features: int, bias: bool = True, device=None):
+        # nn.Parameter does not support FP8 in all torch versions; store as uint8 buffer.
+        nn.Linear.__init__(self, in_features, out_features, bias, device)
+        w_fp8 = self.weight.data.to(torch.float8_e4m3fn)
+        del self.weight
+        self.register_buffer("weight", w_fp8)  # (N, K) fp8_e4m3fn, non-trainable
+
+    def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        x_fp8 = x_2d.to(torch.float8_e4m3fn)
+        return fp8_e4m3_approx_matmul(x_fp8, w)
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        # Accept full-precision weights and convert on load.
+        if "weight" in state_dict and state_dict["weight"].dtype != torch.float8_e4m3fn:
+            state_dict = dict(state_dict)
+            state_dict["weight"] = state_dict["weight"].to(torch.float8_e4m3fn)
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
+
+class LinearApproxFP8E5M2(_LinearApproxBase):
+    """Linear layer whose matmul is computed with the approximate FP8 e5m2 kernel.
+
+    FPMul(x, y) = sign(x)·sign(y) · (1 + x_m + y_m + 2^-2) · 2^(x_e + y_e)
+    (correction 2^-2 because FP8-e5m2 has 2 mantissa bits, l(2)=2)
+
+    Weights are stored in ``torch.float8_e5m2``.
+    Input is cast to FP8-e5m2 before the kernel.
+    Output (float32) is cast back to the original input dtype.
+    """
+    _weight_dtype = torch.float8_e5m2
+
+    def __init__(self, in_features: int, out_features: int, bias: bool = True, device=None):
+        nn.Linear.__init__(self, in_features, out_features, bias, device)
+        w_fp8 = self.weight.data.to(torch.float8_e5m2)
+        del self.weight
+        self.register_buffer("weight", w_fp8)  # (N, K) fp8_e5m2, non-trainable
+
+    def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        x_fp8 = x_2d.to(torch.float8_e5m2)
+        return fp8_e5m2_approx_matmul(x_fp8, w)
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        if "weight" in state_dict and state_dict["weight"].dtype != torch.float8_e5m2:
+            state_dict = dict(state_dict)
+            state_dict["weight"] = state_dict["weight"].to(torch.float8_e5m2)
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
 
 class Int8Params(torch.nn.Parameter):
     def __new__(

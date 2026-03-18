@@ -408,6 +408,10 @@ void cset_nf4_ewm_lut(int bits, cudaStream_t stream) {
     set_nf4_ewm_lut(bits, stream);
 }
 
+void cset_nf4_ewm_lut_data(float* lut, cudaStream_t stream) {
+    set_nf4_ewm_lut_data(lut, stream);
+}
+
 void cnf4_matmul_absmax_fp32(
     unsigned char* A,
     unsigned char* B,
@@ -421,6 +425,22 @@ void cnf4_matmul_absmax_fp32(
     cudaStream_t stream
 ) {
     nf4_matmul_absmax(A, B, absmaxA, absmaxB, C, M, N, K, blocksize, stream);
+}
+
+void cfp32_approx_matmul(float* A, float* B, float* C, int M, int N, int K, cudaStream_t stream) {
+    fp32_approx_matmul(A, B, C, M, N, K, stream);
+}
+
+void cfp16_approx_matmul(half* A, half* B, float* C, int M, int N, int K, cudaStream_t stream) {
+    fp16_approx_matmul(A, B, C, M, N, K, stream);
+}
+
+void cfp8_e4m3_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K, cudaStream_t stream) {
+    fp8_e4m3_approx_matmul(A, B, C, M, N, K, stream);
+}
+
+void cfp8_e5m2_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K, cudaStream_t stream) {
+    fp8_e5m2_approx_matmul(A, B, C, M, N, K, stream);
 }
 
 /*void cnf4_matmul_fp16(unsigned char* A, unsigned char* B, half* C, int M, int N, int K, cudaStream_t stream) {

@@ -160,6 +160,134 @@ __device__ __forceinline__ float dDequantizeNF4(unsigned char val) { return nf4_
 
 __device__ __forceinline__ float dDequantizeEWM_NF4(unsigned char A, unsigned char B) { return g_ewm_nf4_dequantization_lut[(A << 4) | B]; }
 
+// ── Approximate FP multiply helpers ──────────────────────────────────────────
+// FPMul(x,y) = sign(x)*sign(y) * (1 + x_m + y_m + 2^(-l(m))) * 2^(x_e + y_e)
+// l(m): m if m≤3, 3 if m=4, 4 if m>4
+// Zeros, subnormals, NaN and Inf are treated as zero.
+
+struct FPComponents {
+    int   sign;     // +1 or -1
+    int   exp;      // unbiased integer exponent
+    float mant;     // fractional mantissa in [0, 1)
+    bool  is_zero;  // true for zero / subnormal / NaN / Inf
+};
+
+__device__ __forceinline__ FPComponents decompose_fp32(float x) {
+    unsigned int bits = __float_as_uint(x);
+    int exp_raw = (bits >> 23) & 0xFF;
+    if (exp_raw == 0 || exp_raw == 255) return {1, 0, 0.0f, true};
+    return {
+        (bits >> 31) ? -1 : 1,
+        exp_raw - 127,
+        (float)(bits & 0x7FFFFF) * (1.0f / (float)(1 << 23)),
+        false
+    };
+}
+
+__device__ __forceinline__ FPComponents decompose_fp16(__half x) {
+    unsigned short bits = __half_as_ushort(x);
+    int exp_raw = (bits >> 10) & 0x1F;
+    if (exp_raw == 0 || exp_raw == 31) return {1, 0, 0.0f, true};
+    return {
+        (bits >> 15) ? -1 : 1,
+        exp_raw - 15,
+        (float)(bits & 0x3FF) * (1.0f / 1024.0f),
+        false
+    };
+}
+
+// FP8 e4m3fn: 1 sign + 4 exp (bias=7) + 3 mantissa; NaN = 0x7F
+__device__ __forceinline__ FPComponents decompose_fp8_e4m3(uint8_t raw) {
+    uint8_t absval = raw & 0x7F;
+    int exp_raw = (absval >> 3) & 0xF;
+    if (exp_raw == 0 || absval == 0x7F) return {1, 0, 0.0f, true};
+    return {
+        (raw >> 7) ? -1 : 1,
+        exp_raw - 7,
+        (float)(absval & 0x7) * (1.0f / 8.0f),
+        false
+    };
+}
+
+// FP8 e5m2: 1 sign + 5 exp (bias=15) + 2 mantissa
+__device__ __forceinline__ FPComponents decompose_fp8_e5m2(uint8_t raw) {
+    uint8_t absval = raw & 0x7F;
+    int exp_raw = (absval >> 2) & 0x1F;
+    if (exp_raw == 0 || exp_raw == 31) return {1, 0, 0.0f, true};
+    return {
+        (raw >> 7) ? -1 : 1,
+        exp_raw - 15,
+        (float)(absval & 0x3) * (1.0f / 4.0f),
+        false
+    };
+}
+
+// correction_bits = l(m): 4 for FP32/FP16, 3 for FP8-e4m3, 2 for FP8-e5m2
+template <int correction_bits>
+__device__ __forceinline__ float fp_approx_mul(FPComponents a, FPComponents b) {
+    //if (a.is_zero || b.is_zero) return 0.0f;
+    float mag = 1.0f + a.mant + b.mant + (1.0f / (float)(1 << correction_bits));
+    return (float)(a.sign * b.sign) * ldexpf(mag, a.exp + b.exp);
+}
+
+// ── Fix-1: branchless FPComp2 decomposition ───────────────────────────────────
+// Encodes each operand as (sa, mant) where sa = sign * 2^exp as a float.
+// FPMul(x, y) = sa_x * sa_y * (1 + mant_x + mant_y + 2^-l(m))
+// sa_x * sa_y is an exact IEEE multiply (both are signed powers-of-two).
+// Zero / subnormal / NaN / Inf → sa = 0.0f → result is 0 without branching.
+
+struct FPComp2 {
+    float sa;    // sign * 2^exp, or 0.0f for zero/special
+    float mant;  // fractional mantissa in [0, 1)
+};
+
+__device__ __forceinline__ FPComp2 decompose_fp32_fast(float x) {
+    unsigned int bits = __float_as_uint(x);
+    int exp_raw = (bits >> 23) & 0xFF;
+    if (exp_raw == 0 || exp_raw == 255) return {0.0f, 0.0f};
+    // Reuse the raw biased exponent field directly: __int_as_float(exp_raw << 23) == 2^(exp_raw-127)
+    float sa = __int_as_float(exp_raw << 23);
+    if (bits >> 31) sa = -sa;
+    return {sa, (float)(bits & 0x7FFFFF) * (1.0f / 8388608.0f)};
+}
+
+__device__ __forceinline__ FPComp2 decompose_fp16_fast(__half x) {
+    unsigned short bits = __half_as_ushort(x);
+    int exp_raw = (bits >> 10) & 0x1F;
+    if (exp_raw == 0 || exp_raw == 31) return {0.0f, 0.0f};
+    // FP16 bias=15 → unbiased exp = exp_raw-15 → FP32 encoding: (exp_raw-15+127) << 23
+    float sa = __int_as_float((exp_raw + 112) << 23);
+    if (bits >> 15) sa = -sa;
+    return {sa, (float)(bits & 0x3FF) * (1.0f / 1024.0f)};
+}
+
+__device__ __forceinline__ FPComp2 decompose_fp8_e4m3_fast(uint8_t raw) {
+    uint8_t absval = raw & 0x7F;
+    int exp_raw = (absval >> 3) & 0xF;
+    if (exp_raw == 0 || absval == 0x7F) return {0.0f, 0.0f};
+    // FP8 e4m3 bias=7 → (exp_raw-7+127) << 23 = (exp_raw+120) << 23
+    float sa = __int_as_float((exp_raw + 120) << 23);
+    if (raw >> 7) sa = -sa;
+    return {sa, (float)(absval & 0x7) * (1.0f / 8.0f)};
+}
+
+__device__ __forceinline__ FPComp2 decompose_fp8_e5m2_fast(uint8_t raw) {
+    uint8_t absval = raw & 0x7F;
+    int exp_raw = (absval >> 2) & 0x1F;
+    if (exp_raw == 0 || exp_raw == 31) return {0.0f, 0.0f};
+    // FP8 e5m2 bias=15 → (exp_raw-15+127) << 23 = (exp_raw+112) << 23
+    float sa = __int_as_float((exp_raw + 112) << 23);
+    if (raw >> 7) sa = -sa;
+    return {sa, (float)(absval & 0x3) * (1.0f / 4.0f)};
+}
+
+template <int correction_bits>
+__device__ __forceinline__ float fp_approx_mul_fast(FPComp2 a, FPComp2 b) {
+    float scale = a.sa * b.sa;   // exact: both operands are signed powers-of-two (or 0)
+    return scale * (1.0f + a.mant + b.mant + (1.0f / (float)(1 << correction_bits)));
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 /*inline float dDequantizeEWM_NF4(unsigned char a, unsigned char b) {
     const uint8_t sign_a = (a >> 3) & 0x1;
     const uint8_t sign_b = (b >> 3) & 0x1;
@@ -2455,6 +2583,225 @@ __global__ void knf4_matmul_absmax(
     }
     C[i * N + j] = sum;
 }
+
+// ── Approximate FP matmul kernels ────────────────────────────────────────────
+// B is stored pre-transposed: B[j * K + k] is the element at (output row j, k).
+// All kernels produce float32 output.
+
+__global__ void kfp32_approx_matmul(float* A, float* B, float* C, int M, int N, int K) {
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= M || j >= N) return;
+    float sum = 0.0f;
+    for (int k = 0; k < K; k++)
+        sum += fp_approx_mul<4>(decompose_fp32(A[i * K + k]), decompose_fp32(B[j * K + k]));
+    C[i * N + j] = sum;
+}
+
+__global__ void kfp16_approx_matmul(__half* A, __half* B, float* C, int M, int N, int K) {
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= M || j >= N) return;
+    float sum = 0.0f;
+    for (int k = 0; k < K; k++)
+        sum += fp_approx_mul<4>(decompose_fp16(A[i * K + k]), decompose_fp16(B[j * K + k]));
+    C[i * N + j] = sum;
+}
+
+__global__ void kfp8_e4m3_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K) {
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= M || j >= N) return;
+    float sum = 0.0f;
+    for (int k = 0; k < K; k++)
+        sum += fp_approx_mul<3>(decompose_fp8_e4m3(A[i * K + k]), decompose_fp8_e4m3(B[j * K + k]));
+    C[i * N + j] = sum;
+}
+
+__global__ void kfp8_e5m2_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K) {
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= M || j >= N) return;
+    float sum = 0.0f;
+    for (int k = 0; k < K; k++)
+        sum += fp_approx_mul<2>(decompose_fp8_e5m2(A[i * K + k]), decompose_fp8_e5m2(B[j * K + k]));
+    C[i * N + j] = sum;
+}
+
+// ── Fix-1 + Fix-2: FPComp2 + shared-memory tiling ───────────────────────────
+// Tile size matches the 16×16 thread block used by the dispatcher.
+// Memory layout:
+//   A tile: As_sa/As_mant[ty][tx]  — thread (ty,tx) loads A[i, k0+tx] (coalesced in tx)
+//   B tile: Bs_sa/Bs_mant[tx][ty]  — thread (ty,tx) loads B[j_base+ty, k0+tx] (coalesced
+//           in tx) and stores transposed, so the inner loop reads Bs[k][tx] with
+//           consecutive tx across the warp (no bank conflicts).
+//   Bs is padded to APPROX_TILE+1 columns to eliminate conflicts on the transposed store.
+
+#define APPROX_TILE 16
+
+__global__ void kfp32_approx_matmul_v2(float* A, float* B, float* C, int M, int N, int K) {
+    __shared__ float As_sa  [APPROX_TILE][APPROX_TILE];
+    __shared__ float As_mant[APPROX_TILE][APPROX_TILE];
+    __shared__ float Bs_sa  [APPROX_TILE][APPROX_TILE + 1];
+    __shared__ float Bs_mant[APPROX_TILE][APPROX_TILE + 1];
+
+    int ty = threadIdx.y, tx = threadIdx.x;
+    int i  = blockIdx.y * APPROX_TILE + ty;
+    int j  = blockIdx.x * APPROX_TILE + tx;
+    float acc = 0.0f;
+
+    for (int k0 = 0; k0 < K; k0 += APPROX_TILE) {
+        // A tile: A[i, k0+tx] — consecutive tx → coalesced global load
+        if (i < M && (k0 + tx) < K) {
+            FPComp2 a = decompose_fp32_fast(A[i * K + k0 + tx]);
+            As_sa[ty][tx] = a.sa;  As_mant[ty][tx] = a.mant;
+        } else {
+            As_sa[ty][tx] = As_mant[ty][tx] = 0.0f;
+        }
+        // B tile: B[j_base+ty, k0+tx] — consecutive tx → coalesced global load
+        // Transposed store Bs[tx][ty] so inner loop reads Bs[k][tx] (consecutive tx)
+        int j_load = blockIdx.x * APPROX_TILE + ty;
+        if (j_load < N && (k0 + tx) < K) {
+            FPComp2 b = decompose_fp32_fast(B[j_load * K + k0 + tx]);
+            Bs_sa[tx][ty] = b.sa;  Bs_mant[tx][ty] = b.mant;
+        } else {
+            Bs_sa[tx][ty] = Bs_mant[tx][ty] = 0.0f;
+        }
+        __syncthreads();
+
+        if (i < M && j < N) {
+            #pragma unroll
+            for (int k = 0; k < APPROX_TILE; k++) {
+                float scale = As_sa[ty][k] * Bs_sa[k][tx];
+                acc += scale * (1.0f + As_mant[ty][k] + Bs_mant[k][tx] + (1.0f / 16.0f));
+            }
+        }
+        __syncthreads();
+    }
+
+    if (i < M && j < N) C[i * N + j] = acc;
+}
+
+__global__ void kfp16_approx_matmul_v2(__half* A, __half* B, float* C, int M, int N, int K) {
+    __shared__ float As_sa  [APPROX_TILE][APPROX_TILE];
+    __shared__ float As_mant[APPROX_TILE][APPROX_TILE];
+    __shared__ float Bs_sa  [APPROX_TILE][APPROX_TILE + 1];
+    __shared__ float Bs_mant[APPROX_TILE][APPROX_TILE + 1];
+
+    int ty = threadIdx.y, tx = threadIdx.x;
+    int i  = blockIdx.y * APPROX_TILE + ty;
+    int j  = blockIdx.x * APPROX_TILE + tx;
+    float acc = 0.0f;
+
+    for (int k0 = 0; k0 < K; k0 += APPROX_TILE) {
+        if (i < M && (k0 + tx) < K) {
+            FPComp2 a = decompose_fp16_fast(A[i * K + k0 + tx]);
+            As_sa[ty][tx] = a.sa;  As_mant[ty][tx] = a.mant;
+        } else {
+            As_sa[ty][tx] = As_mant[ty][tx] = 0.0f;
+        }
+        int j_load = blockIdx.x * APPROX_TILE + ty;
+        if (j_load < N && (k0 + tx) < K) {
+            FPComp2 b = decompose_fp16_fast(B[j_load * K + k0 + tx]);
+            Bs_sa[tx][ty] = b.sa;  Bs_mant[tx][ty] = b.mant;
+        } else {
+            Bs_sa[tx][ty] = Bs_mant[tx][ty] = 0.0f;
+        }
+        __syncthreads();
+
+        if (i < M && j < N) {
+            #pragma unroll
+            for (int k = 0; k < APPROX_TILE; k++) {
+                float scale = As_sa[ty][k] * Bs_sa[k][tx];
+                acc += scale * (1.0f + As_mant[ty][k] + Bs_mant[k][tx] + (1.0f / 16.0f));
+            }
+        }
+        __syncthreads();
+    }
+
+    if (i < M && j < N) C[i * N + j] = acc;
+}
+
+__global__ void kfp8_e4m3_approx_matmul_v2(uint8_t* A, uint8_t* B, float* C, int M, int N, int K) {
+    __shared__ float As_sa  [APPROX_TILE][APPROX_TILE];
+    __shared__ float As_mant[APPROX_TILE][APPROX_TILE];
+    __shared__ float Bs_sa  [APPROX_TILE][APPROX_TILE + 1];
+    __shared__ float Bs_mant[APPROX_TILE][APPROX_TILE + 1];
+
+    int ty = threadIdx.y, tx = threadIdx.x;
+    int i  = blockIdx.y * APPROX_TILE + ty;
+    int j  = blockIdx.x * APPROX_TILE + tx;
+    float acc = 0.0f;
+
+    for (int k0 = 0; k0 < K; k0 += APPROX_TILE) {
+        if (i < M && (k0 + tx) < K) {
+            FPComp2 a = decompose_fp8_e4m3_fast(A[i * K + k0 + tx]);
+            As_sa[ty][tx] = a.sa;  As_mant[ty][tx] = a.mant;
+        } else {
+            As_sa[ty][tx] = As_mant[ty][tx] = 0.0f;
+        }
+        int j_load = blockIdx.x * APPROX_TILE + ty;
+        if (j_load < N && (k0 + tx) < K) {
+            FPComp2 b = decompose_fp8_e4m3_fast(B[j_load * K + k0 + tx]);
+            Bs_sa[tx][ty] = b.sa;  Bs_mant[tx][ty] = b.mant;
+        } else {
+            Bs_sa[tx][ty] = Bs_mant[tx][ty] = 0.0f;
+        }
+        __syncthreads();
+
+        if (i < M && j < N) {
+            #pragma unroll
+            for (int k = 0; k < APPROX_TILE; k++) {
+                float scale = As_sa[ty][k] * Bs_sa[k][tx];
+                acc += scale * (1.0f + As_mant[ty][k] + Bs_mant[k][tx] + (1.0f / 8.0f));
+            }
+        }
+        __syncthreads();
+    }
+
+    if (i < M && j < N) C[i * N + j] = acc;
+}
+
+__global__ void kfp8_e5m2_approx_matmul_v2(uint8_t* A, uint8_t* B, float* C, int M, int N, int K) {
+    __shared__ float As_sa  [APPROX_TILE][APPROX_TILE];
+    __shared__ float As_mant[APPROX_TILE][APPROX_TILE];
+    __shared__ float Bs_sa  [APPROX_TILE][APPROX_TILE + 1];
+    __shared__ float Bs_mant[APPROX_TILE][APPROX_TILE + 1];
+
+    int ty = threadIdx.y, tx = threadIdx.x;
+    int i  = blockIdx.y * APPROX_TILE + ty;
+    int j  = blockIdx.x * APPROX_TILE + tx;
+    float acc = 0.0f;
+
+    for (int k0 = 0; k0 < K; k0 += APPROX_TILE) {
+        if (i < M && (k0 + tx) < K) {
+            FPComp2 a = decompose_fp8_e5m2_fast(A[i * K + k0 + tx]);
+            As_sa[ty][tx] = a.sa;  As_mant[ty][tx] = a.mant;
+        } else {
+            As_sa[ty][tx] = As_mant[ty][tx] = 0.0f;
+        }
+        int j_load = blockIdx.x * APPROX_TILE + ty;
+        if (j_load < N && (k0 + tx) < K) {
+            FPComp2 b = decompose_fp8_e5m2_fast(B[j_load * K + k0 + tx]);
+            Bs_sa[tx][ty] = b.sa;  Bs_mant[tx][ty] = b.mant;
+        } else {
+            Bs_sa[tx][ty] = Bs_mant[tx][ty] = 0.0f;
+        }
+        __syncthreads();
+
+        if (i < M && j < N) {
+            #pragma unroll
+            for (int k = 0; k < APPROX_TILE; k++) {
+                float scale = As_sa[ty][k] * Bs_sa[k][tx];
+                acc += scale * (1.0f + As_mant[ty][k] + Bs_mant[k][tx] + (1.0f / 4.0f));
+            }
+        }
+        __syncthreads();
+    }
+
+    if (i < M && j < N) C[i * N + j] = acc;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 template __global__ void kgemm_4bit_inference_naive<half, 128, 16>(
     int M, int N, int K, half* __restrict__ const A, unsigned char* B, float* absmax, const float* datatype, half* out,

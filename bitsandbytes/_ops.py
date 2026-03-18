@@ -316,6 +316,50 @@ def _(
     torch._check_is_size(blocksize)
     return torch.empty((M, N), dtype=torch.float32, device=A.device)
 
+torch.library.define(
+    "bitsandbytes::fp32_approx_matmul",
+    "(Tensor A, Tensor B, int M, int N, int K) -> Tensor",
+)
+
+@register_fake("bitsandbytes::fp32_approx_matmul")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    torch._check(A.dtype == torch.float32, lambda: f"A must be float32, got {A.dtype}")
+    torch._check(B.dtype == torch.float32, lambda: f"B must be float32, got {B.dtype}")
+    return torch.empty((M, N), dtype=torch.float32, device=A.device)
+
+torch.library.define(
+    "bitsandbytes::fp16_approx_matmul",
+    "(Tensor A, Tensor B, int M, int N, int K) -> Tensor",
+)
+
+@register_fake("bitsandbytes::fp16_approx_matmul")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    torch._check(A.dtype == torch.float16, lambda: f"A must be float16, got {A.dtype}")
+    torch._check(B.dtype == torch.float16, lambda: f"B must be float16, got {B.dtype}")
+    return torch.empty((M, N), dtype=torch.float32, device=A.device)
+
+torch.library.define(
+    "bitsandbytes::fp8_e4m3_approx_matmul",
+    "(Tensor A, Tensor B, int M, int N, int K) -> Tensor",
+)
+
+@register_fake("bitsandbytes::fp8_e4m3_approx_matmul")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    torch._check(A.dtype == torch.uint8, lambda: f"A must be uint8, got {A.dtype}")
+    torch._check(B.dtype == torch.uint8, lambda: f"B must be uint8, got {B.dtype}")
+    return torch.empty((M, N), dtype=torch.float32, device=A.device)
+
+torch.library.define(
+    "bitsandbytes::fp8_e5m2_approx_matmul",
+    "(Tensor A, Tensor B, int M, int N, int K) -> Tensor",
+)
+
+@register_fake("bitsandbytes::fp8_e5m2_approx_matmul")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    torch._check(A.dtype == torch.uint8, lambda: f"A must be uint8, got {A.dtype}")
+    torch._check(B.dtype == torch.uint8, lambda: f"B must be uint8, got {B.dtype}")
+    return torch.empty((M, N), dtype=torch.float32, device=A.device)
+
 torch.library.define("bitsandbytes::quantize_blockwise", "(Tensor A, Tensor code, int blocksize) -> (Tensor, Tensor)")
 
 

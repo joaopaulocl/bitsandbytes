@@ -586,6 +586,62 @@ def _nf4_matmul_absmax_impl(
         )
 
 
+@register_kernel("bitsandbytes::fp32_approx_matmul", "cuda")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    out = torch.empty((M, N), dtype=torch.float32, device=A.device)
+    torch._check(A.dtype == torch.float32, lambda: f"A must be float32, got {A.dtype}")
+    torch._check(B.dtype == torch.float32, lambda: f"B must be float32, got {B.dtype}")
+    torch._check(A.is_contiguous(), lambda: "A must be contiguous")
+    torch._check(B.is_contiguous(), lambda: "B must be contiguous")
+    torch._check(A.shape == (M, K), lambda: f"A.shape must be ({M}, {K}), got {A.shape}")
+    torch._check(B.shape == (N, K), lambda: f"B.shape must be ({N}, {K}), got {B.shape}")
+    with _cuda_device_of(A):
+        lib.cfp32_approx_matmul(get_ptr(A), get_ptr(B), get_ptr(out), ct.c_int(M), ct.c_int(N), ct.c_int(K), _get_tensor_stream(A))
+    return out
+
+
+@register_kernel("bitsandbytes::fp16_approx_matmul", "cuda")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    out = torch.empty((M, N), dtype=torch.float32, device=A.device)
+    torch._check(A.dtype == torch.float16, lambda: f"A must be float16, got {A.dtype}")
+    torch._check(B.dtype == torch.float16, lambda: f"B must be float16, got {B.dtype}")
+    torch._check(A.is_contiguous(), lambda: "A must be contiguous")
+    torch._check(B.is_contiguous(), lambda: "B must be contiguous")
+    torch._check(A.shape == (M, K), lambda: f"A.shape must be ({M}, {K}), got {A.shape}")
+    torch._check(B.shape == (N, K), lambda: f"B.shape must be ({N}, {K}), got {B.shape}")
+    with _cuda_device_of(A):
+        lib.cfp16_approx_matmul(get_ptr(A), get_ptr(B), get_ptr(out), ct.c_int(M), ct.c_int(N), ct.c_int(K), _get_tensor_stream(A))
+    return out
+
+
+@register_kernel("bitsandbytes::fp8_e4m3_approx_matmul", "cuda")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    out = torch.empty((M, N), dtype=torch.float32, device=A.device)
+    torch._check(A.dtype == torch.uint8, lambda: f"A must be uint8, got {A.dtype}")
+    torch._check(B.dtype == torch.uint8, lambda: f"B must be uint8, got {B.dtype}")
+    torch._check(A.is_contiguous(), lambda: "A must be contiguous")
+    torch._check(B.is_contiguous(), lambda: "B must be contiguous")
+    torch._check(A.shape == (M, K), lambda: f"A.shape must be ({M}, {K}), got {A.shape}")
+    torch._check(B.shape == (N, K), lambda: f"B.shape must be ({N}, {K}), got {B.shape}")
+    with _cuda_device_of(A):
+        lib.cfp8_e4m3_approx_matmul(get_ptr(A), get_ptr(B), get_ptr(out), ct.c_int(M), ct.c_int(N), ct.c_int(K), _get_tensor_stream(A))
+    return out
+
+
+@register_kernel("bitsandbytes::fp8_e5m2_approx_matmul", "cuda")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    out = torch.empty((M, N), dtype=torch.float32, device=A.device)
+    torch._check(A.dtype == torch.uint8, lambda: f"A must be uint8, got {A.dtype}")
+    torch._check(B.dtype == torch.uint8, lambda: f"B must be uint8, got {B.dtype}")
+    torch._check(A.is_contiguous(), lambda: "A must be contiguous")
+    torch._check(B.is_contiguous(), lambda: "B must be contiguous")
+    torch._check(A.shape == (M, K), lambda: f"A.shape must be ({M}, {K}), got {A.shape}")
+    torch._check(B.shape == (N, K), lambda: f"B.shape must be ({N}, {K}), got {B.shape}")
+    with _cuda_device_of(A):
+        lib.cfp8_e5m2_approx_matmul(get_ptr(A), get_ptr(B), get_ptr(out), ct.c_int(M), ct.c_int(N), ct.c_int(K), _get_tensor_stream(A))
+    return out
+
+
 def set_nf4_ewm_lut(bits: int, device: Optional[torch.device] = None) -> None:
     if device is None:
         device = torch.device("cuda")
@@ -595,6 +651,19 @@ def set_nf4_ewm_lut(bits: int, device: Optional[torch.device] = None) -> None:
     tensor = torch.empty(1, device=device)
     with _cuda_device_of(tensor):
         lib.cset_nf4_ewm_lut(ct.c_int(bits), _get_tensor_stream(tensor))
+
+
+def set_nf4_ewm_lut_data(lut: torch.Tensor) -> None:
+    if lut.device.type not in ("cuda", "hip"):
+        raise ValueError(f"lut must be on CUDA or HIP, got {lut.device}")
+    if lut.dtype != torch.float32:
+        raise ValueError(f"lut must be float32, got {lut.dtype}")
+    if lut.numel() != 256:
+        raise ValueError(f"lut must have 256 elements, got {lut.numel()}")
+
+    lut = lut.contiguous()
+    with _cuda_device_of(lut):
+        lib.cset_nf4_ewm_lut_data(get_ptr(lut), _get_tensor_stream(lut))
 
 
 

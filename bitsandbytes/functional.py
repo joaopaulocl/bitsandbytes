@@ -834,6 +834,74 @@ def nf4_matmul_absmax(
     return torch.ops.bitsandbytes.nf4_matmul_absmax.default(A, B, absmaxA, absmaxB, blocksize, M, N, K)
 
 
+def fp32_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Approximate FP32 matmul using FPMul(x,y) = sign * (1 + x_m + y_m + 2^-4) * 2^(x_e+y_e).
+
+    Args:
+        A: (M, K) float32
+        B: (N, K) float32, pre-transposed (B[j, k] is the weight for output neuron j at index k)
+
+    Returns:
+        C: (M, N) float32
+    """
+    M, K = A.shape
+    N = B.shape[0]
+    return torch.ops.bitsandbytes.fp32_approx_matmul.default(A, B, M, N, K)
+
+
+def fp16_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Approximate FP16 matmul using FPMul(x,y) = sign * (1 + x_m + y_m + 2^-4) * 2^(x_e+y_e).
+
+    Args:
+        A: (M, K) float16
+        B: (N, K) float16, pre-transposed
+
+    Returns:
+        C: (M, N) float32
+    """
+    M, K = A.shape
+    N = B.shape[0]
+    return torch.ops.bitsandbytes.fp16_approx_matmul.default(A, B, M, N, K)
+
+
+def fp8_e4m3_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Approximate FP8 e4m3fn matmul using FPMul(x,y) = sign * (1 + x_m + y_m + 2^-3) * 2^(x_e+y_e).
+
+    Args:
+        A: (M, K) torch.float8_e4m3fn or uint8
+        B: (N, K) torch.float8_e4m3fn or uint8, pre-transposed
+
+    Returns:
+        C: (M, N) float32
+    """
+    if A.dtype == torch.float8_e4m3fn:
+        A = A.view(torch.uint8)
+    if B.dtype == torch.float8_e4m3fn:
+        B = B.view(torch.uint8)
+    M, K = A.shape
+    N = B.shape[0]
+    return torch.ops.bitsandbytes.fp8_e4m3_approx_matmul.default(A, B, M, N, K)
+
+
+def fp8_e5m2_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Approximate FP8 e5m2 matmul using FPMul(x,y) = sign * (1 + x_m + y_m + 2^-2) * 2^(x_e+y_e).
+
+    Args:
+        A: (M, K) torch.float8_e5m2 or uint8
+        B: (N, K) torch.float8_e5m2 or uint8, pre-transposed
+
+    Returns:
+        C: (M, N) float32
+    """
+    if A.dtype == torch.float8_e5m2:
+        A = A.view(torch.uint8)
+    if B.dtype == torch.float8_e5m2:
+        B = B.view(torch.uint8)
+    M, K = A.shape
+    N = B.shape[0]
+    return torch.ops.bitsandbytes.fp8_e5m2_approx_matmul.default(A, B, M, N, K)
+
+
 def set_nf4_ewm_lut(bits: int, device: Optional[torch.device] = None) -> None:
     if device is None:
         device = torch.device("cuda")
@@ -847,6 +915,19 @@ def set_nf4_ewm_lut(bits: int, device: Optional[torch.device] = None) -> None:
     from bitsandbytes.backends.cuda import ops as cuda_ops
 
     cuda_ops.set_nf4_ewm_lut(bits, device=device)
+
+
+def set_nf4_ewm_lut_data(lut: torch.Tensor) -> None:
+    if lut.device.type not in ("cuda", "hip"):
+        raise ValueError(f"lut must be on CUDA or HIP, got {lut.device}")
+    if lut.dtype != torch.float32:
+        raise ValueError(f"lut must be float32, got {lut.dtype}")
+    if lut.numel() != 256:
+        raise ValueError(f"lut must have 256 elements, got {lut.numel()}")
+
+    from bitsandbytes.backends.cuda import ops as cuda_ops
+
+    cuda_ops.set_nf4_ewm_lut_data(lut)
 
 def multiply_nf4(
     A: torch.Tensor,

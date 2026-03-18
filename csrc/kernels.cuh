@@ -140,4 +140,16 @@ __global__ void knf4_matmul_absmax(
     int blocksize
 );
 
+// Approximate FP matmul kernels (B pre-transposed, output float32)
+__global__ void kfp32_approx_matmul(float* A, float* B, float* C, int M, int N, int K);
+__global__ void kfp16_approx_matmul(__half* A, __half* B, float* C, int M, int N, int K);
+__global__ void kfp8_e4m3_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K);
+__global__ void kfp8_e5m2_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K);
+
+// Fix-1 variants: branchless FPComp2, no ldexpf
+__global__ void kfp32_approx_matmul_v2(float* A, float* B, float* C, int M, int N, int K);
+__global__ void kfp16_approx_matmul_v2(__half* A, __half* B, float* C, int M, int N, int K);
+__global__ void kfp8_e4m3_approx_matmul_v2(uint8_t* A, uint8_t* B, float* C, int M, int N, int K);
+__global__ void kfp8_e5m2_approx_matmul_v2(uint8_t* A, uint8_t* B, float* C, int M, int N, int K);
+
 #endif

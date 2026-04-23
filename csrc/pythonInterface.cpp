@@ -443,6 +443,22 @@ void cfp8_e5m2_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int
     fp8_e5m2_approx_matmul(A, B, C, M, N, K, stream);
 }
 
+void cbf16_approx_matmul(__nv_bfloat16* A, __nv_bfloat16* B, float* C, int M, int N, int K, cudaStream_t stream) {
+    bf16_approx_matmul(A, B, C, M, N, K, stream);
+}
+
+void cbf16_approx_ewmul(__nv_bfloat16* A, __nv_bfloat16* B, float* C, int n, cudaStream_t stream) {
+    bf16_approx_ewmul(A, B, C, n, stream);
+}
+
+void cbf16_approx_ewmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int n, cudaStream_t stream) {
+    bf16_approx_ewmul_faithful(A, B, C, n, stream);
+}
+
+void cset_prim8_lut(int lut_id, cudaStream_t stream) {
+    set_prim8_lut(lut_id, stream);
+}
+
 /*void cnf4_matmul_fp16(unsigned char* A, unsigned char* B, half* C, int M, int N, int K, cudaStream_t stream) {
     nf4_matmul(A, B, C, M, N, K, stream);
 }

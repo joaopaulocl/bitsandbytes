@@ -163,5 +163,10 @@ __global__ void kfp32_approx_matmul_v2(float* A, float* B, float* C, int M, int 
 __global__ void kfp16_approx_matmul_v2(__half* A, __half* B, float* C, int M, int N, int K);
 __global__ void kfp8_e4m3_approx_matmul_v2(uint8_t* A, uint8_t* B, float* C, int M, int N, int K);
 __global__ void kfp8_e5m2_approx_matmul_v2(uint8_t* A, uint8_t* B, float* C, int M, int N, int K);
-
+// BF16 approx matmul using PRIM8 LUT for mantissa cross-product
+__global__ void kbf16_approx_matmul(__nv_bfloat16* A, __nv_bfloat16* B, float* C, int M, int N, int K);
+__global__ void kbf16_approx_matmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B, float* C, int M, int N, int K);
+// BF16 element-wise approximate multiply
+__global__ void kbf16_approx_ewmul(__nv_bfloat16* A, __nv_bfloat16* B, float* C, int n);
+__global__ void kbf16_approx_ewmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int n);
 #endif

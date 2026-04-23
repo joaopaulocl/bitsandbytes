@@ -23,6 +23,7 @@ from bitsandbytes.functional import (
     nf4_matmul_absmax,
     quantize_nf4,
     fp32_approx_matmul,
+    bf16_approx_matmul,
     fp16_approx_matmul,
     fp8_e4m3_approx_matmul,
     fp8_e5m2_approx_matmul,
@@ -812,7 +813,11 @@ class _LinearApproxBase(nn.Linear):
         orig_shape = x.shape
         x_2d = x.reshape(-1, x.shape[-1])  # (M, K)
 
-        out = self._approx_matmul(x_2d, self.weight)  # (M, N) float32
+        w = self.weight
+        if w.device != x_2d.device:
+            w = w.to(x_2d.device)
+
+        out = self._approx_matmul(x_2d, w)  # (M, N) float32
 
         out = out.view(*orig_shape[:-1], self.out_features)
         if self.bias is not None:
@@ -865,6 +870,7 @@ class LinearApproxFP8E4M3(_LinearApproxBase):
     def __init__(self, in_features: int, out_features: int, bias: bool = True, device=None):
         # nn.Parameter does not support FP8 in all torch versions; store as uint8 buffer.
         nn.Linear.__init__(self, in_features, out_features, bias, device)
+        # TODO do we need scaling?
         w_fp8 = self.weight.data.to(torch.float8_e4m3fn)
         del self.weight
         self.register_buffer("weight", w_fp8)  # (N, K) fp8_e4m3fn, non-trainable
@@ -907,6 +913,31 @@ class LinearApproxFP8E5M2(_LinearApproxBase):
         if "weight" in state_dict and state_dict["weight"].dtype != torch.float8_e5m2:
             state_dict = dict(state_dict)
             state_dict["weight"] = state_dict["weight"].to(torch.float8_e5m2)
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
+
+class LinearApproxBfloat16(_LinearApproxBase):
+    """Linear layer whose matmul uses the PRIM8 LUT-based approximate BF16 kernel.
+
+    FPMul(x, y) = sign(x)·sign(y) · (1 + x_m/128 + y_m/128 + LUT[(x_m<<8)|y_m]/16384) · 2^(x_e+y_e-127)
+    where mantissa is the 7-bit BF16 mantissa field (0-127).
+
+    Weights are stored in ``torch.bfloat16``.
+    Input is cast to bfloat16 before the kernel.
+    Output (float32) is cast back to the original input dtype.
+
+    The PRIM8 LUT must be uploaded to the GPU before first use via
+    ``bitsandbytes.functional.set_prim8_lut(lut_id)``.
+    """
+    _weight_dtype = torch.bfloat16
+
+    def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        return bf16_approx_matmul(x_2d.bfloat16(), w.bfloat16())
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        if "weight" in state_dict and state_dict["weight"].dtype != torch.bfloat16:
+            state_dict = dict(state_dict)
+            state_dict["weight"] = state_dict["weight"].to(torch.bfloat16)
         return super().load_state_dict(state_dict, strict=strict, assign=assign)
 
 

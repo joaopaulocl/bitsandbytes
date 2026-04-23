@@ -844,6 +844,10 @@ def fp32_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     Returns:
         C: (M, N) float32
     """
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
     M, K = A.shape
     N = B.shape[0]
     return torch.ops.bitsandbytes.fp32_approx_matmul.default(A, B, M, N, K)
@@ -859,6 +863,10 @@ def fp16_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     Returns:
         C: (M, N) float32
     """
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
     M, K = A.shape
     N = B.shape[0]
     return torch.ops.bitsandbytes.fp16_approx_matmul.default(A, B, M, N, K)
@@ -874,13 +882,29 @@ def fp8_e4m3_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     Returns:
         C: (M, N) float32
     """
+    # A = A.contiguous().view(torch.uint8)
+    # B = B.contiguous().view(torch.uint8)
+    
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
+           
     if A.dtype == torch.float8_e4m3fn:
         A = A.view(torch.uint8)
     if B.dtype == torch.float8_e4m3fn:
         B = B.view(torch.uint8)
     M, K = A.shape
     N = B.shape[0]
-    return torch.ops.bitsandbytes.fp8_e4m3_approx_matmul.default(A, B, M, N, K)
+    out = torch.ops.bitsandbytes.fp8_e4m3_approx_matmul.default(A, B, M, N, K)
+    # x_fp8 is a fresh allocation (x_2d.to(fp8) always copies), so it can be
+    # GCed before the async kernel finishes reading it.  record_stream() tells
+    # the caching allocator to keep the backing memory live until the stream
+    # advances past this point — the same mechanism PyTorch uses internally.
+    if A.is_cuda:
+        stream = torch.cuda.current_stream(A.device)
+        A.record_stream(stream)
+    return out
 
 
 def fp8_e5m2_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
@@ -893,13 +917,91 @@ def fp8_e5m2_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     Returns:
         C: (M, N) float32
     """
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
+        
     if A.dtype == torch.float8_e5m2:
         A = A.view(torch.uint8)
     if B.dtype == torch.float8_e5m2:
         B = B.view(torch.uint8)
+
     M, K = A.shape
     N = B.shape[0]
-    return torch.ops.bitsandbytes.fp8_e5m2_approx_matmul.default(A, B, M, N, K)
+    out = torch.ops.bitsandbytes.fp8_e5m2_approx_matmul.default(A, B, M, N, K)
+    if A.is_cuda:
+        A.record_stream(torch.cuda.current_stream(A.device))
+    return out
+
+
+def bf16_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Approximate BF16 matmul using PRIM8 LUT for mantissa cross-product.
+
+    Args:
+        A: (M, K) torch.bfloat16, contiguous
+        B: (N, K) torch.bfloat16, contiguous (pre-transposed weight)
+
+    Returns:
+        (M, N) torch.float32
+    """
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
+    M, K = A.shape
+    N = B.shape[0]
+    return torch.ops.bitsandbytes.bf16_approx_matmul.default(A, B, M, N, K)
+
+
+def bf16_approx_ewmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Approximate BF16 element-wise multiply using PRIM8 LUT for mantissa cross-product.
+
+    Args:
+        A: BF16 tensor, any shape, contiguous
+        B: BF16 tensor, same shape as A, contiguous
+
+    Returns:
+        float32 tensor, same shape as A
+    """
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
+    n = A.numel()
+    out = torch.ops.bitsandbytes.bf16_approx_ewmul.default(A.view(-1), B.view(-1), n)
+    return out.view(A.shape)
+
+
+def bf16_approx_ewmul_faithful(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Faithful BF16 element-wise multiply: bit-level XOR signs, sum exponents, LUT mantissa.
+
+    Args:
+        A: BF16 tensor, any shape, contiguous
+        B: BF16 tensor, same shape as A, contiguous
+
+    Returns:
+        BF16 tensor, same shape as A
+    """
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
+    n = A.numel()
+    out = torch.ops.bitsandbytes.bf16_approx_ewmul_faithful.default(A.view(-1), B.view(-1), n)
+    return out.view(A.shape)
+
+
+def set_prim8_lut(lut_id: int) -> None:
+    """Upload one of the 14 PRIM8 LUT variants to the GPU.
+
+    Args:
+        lut_id: 0-6 → R0 variants (44/55/66/77/88/99/aa),
+                7-13 → R12 variants (44/55/66/77/88/99/aa)
+    """
+    from bitsandbytes.backends.cuda import ops as cuda_ops
+
+    cuda_ops.set_prim8_lut(lut_id)
 
 
 def set_nf4_ewm_lut(bits: int, device: Optional[torch.device] = None) -> None:

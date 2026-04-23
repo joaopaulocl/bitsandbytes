@@ -18,6 +18,7 @@ from .modules import (
     LinearApproxFP16,
     LinearApproxFP8E4M3,
     LinearApproxFP8E5M2,
+    LinearApproxBfloat16,
     OutlierAwareLinear,
     Params4bit,
     StableEmbedding,

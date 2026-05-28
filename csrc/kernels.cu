@@ -3038,7 +3038,14 @@ __global__ void kbf16_approx_matmul(__nv_bfloat16* A, __nv_bfloat16* B, float* C
     if (i < M && j < N) C[i * N + j] = acc;
 }
 
+
 __device__ __forceinline__ __nv_bfloat16 bf16_approx_mul(uint16_t a, uint16_t b) {
+#if defined(BF16_APPROX_MUL_HW_SMOKE_TEST)
+    // Smoke test: bypass the LUT entirely and use hardware BF16 multiply.
+    // If this still doesn't match an exact BF16 matmul, the bug is in the
+    // tiling/accumulation, not in the multiply.
+    return __ushort_as_bfloat16(a) * __ushort_as_bfloat16(b);
+#else
     int sign_a = (a >> 15) & 1;
     int sign_b = (b >> 15) & 1;
     int exp_a  = (a >> 7) & 0xFF;
@@ -3048,32 +3055,57 @@ __device__ __forceinline__ __nv_bfloat16 bf16_approx_mul(uint16_t a, uint16_t b)
 
     // special cases: denormals → 0, inf/nan → inf
     if (exp_a == 0 || exp_b == 0)
-        return (uint16_t)((sign_a ^ sign_b) << 15);
+        return __ushort_as_bfloat16((sign_a ^ sign_b) << 15);
     if (exp_a == 255 || exp_b == 255)
-        return (uint16_t)(((sign_a ^ sign_b) << 15) | (0xFF << 7));
+        return __ushort_as_bfloat16(((sign_a ^ sign_b) << 15) | (0xFF << 7));
 
     // significand product (Q2.14 fixed-point)
     // sig_a * sig_b = (128+ma)*(128+mb) = 16384 + 128*(ma+mb) + ma*mb
     uint16_t lv = __ldg(&g_prim8_lut[(ma << 8) | mb]);   // ≈ ma*mb
     int32_t prod = (1 << 14) + ((ma + mb) << 7) + (int32_t)lv;
 
-    // normalize: prod in [16384, 65025], bit 15 set means product ∈ [2.0, 4.0)
+    // normalize: prod in [16384, 65025], bit 15 set → product ∈ [2.0, 4.0)
     int mant_out, exp_adj;
+#if defined(BF16_APPROX_MUL_ROUND_NEAREST)
+    // Round-to-nearest: add 0.5 ULP before truncating, handle carry into exponent.
     if (prod & (1 << 15)) {
-        mant_out = (prod >> 8) & 0x7F;   // bits [14:8], round-to-zero
+        int prod_rn = prod + (1 << 7);
+        if (prod_rn >= (1 << 16)) {   // carry out: bump exponent, mantissa wraps to 0
+            mant_out = 0;
+            exp_adj  = 2;
+        } else {
+            mant_out = (prod_rn >> 8) & 0x7F;
+            exp_adj  = 1;
+        }
+    } else {
+        int prod_rn = prod + (1 << 6);
+        if (prod_rn & (1 << 15)) {    // carry into overflow branch
+            mant_out = 0;
+            exp_adj  = 1;
+        } else {
+            mant_out = (prod_rn >> 7) & 0x7F;
+            exp_adj  = 0;
+        }
+    }
+#else
+    // Round-to-zero (truncation): drop the low bits.
+    if (prod & (1 << 15)) {
+        mant_out = (prod >> 8) & 0x7F;
         exp_adj  = 1;
     } else {
-        mant_out = (prod >> 7) & 0x7F;   // bits [13:7]
+        mant_out = (prod >> 7) & 0x7F;
         exp_adj  = 0;
     }
+#endif  // BF16_APPROX_MUL_ROUND_NEAREST
 
     // exponent sum (each has bias 127, sum has bias 254, subtract one bias)
     int exp_out = exp_a + exp_b - 127 + exp_adj;
 
-    if (exp_out <= 0)   return (uint16_t)((sign_a ^ sign_b) << 15);        // underflow
-    if (exp_out >= 255) return (uint16_t)(((sign_a ^ sign_b) << 15) | (0xFF << 7)); // overflow
+    if (exp_out <= 0)   return __ushort_as_bfloat16((sign_a ^ sign_b) << 15);
+    if (exp_out >= 255) return __ushort_as_bfloat16(((sign_a ^ sign_b) << 15) | (0xFF << 7));
 
     return __ushort_as_bfloat16(((sign_a ^ sign_b) << 15) | (exp_out << 7) | mant_out);
+#endif  // BF16_APPROX_MUL_HW_SMOKE_TEST
 }
 
 __global__ void kbf16_approx_matmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B,
@@ -3098,8 +3130,7 @@ __global__ void kbf16_approx_matmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B,
         if (i < M && j < N) {
             #pragma unroll
             for (int k = 0; k < APPROX_TILE; k++) {
-                uint16_t prod_bits = bf16_approx_mul(As[ty][k], Bs[k][tx]);
-                acc = __fadd_rz(acc, __bfloat162float(__ushort_as_bfloat16(prod_bits)));
+                acc += __bfloat162float(bf16_approx_mul(As[ty][k], Bs[k][tx]));
             }
         }
         __syncthreads();

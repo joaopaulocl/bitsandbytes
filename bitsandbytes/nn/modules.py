@@ -501,6 +501,64 @@ class Linear4bit(nn.Linear):
         self.quant_state = None
         self.quant_storage = quant_storage
         self.support_avx512bf16_for_cpu = has_avx512bf16()
+        self._stats_enabled = False
+        self._stats: dict = {}
+
+    def enable_stats_collection(self) -> None:
+        self._stats_enabled = True
+        self._stats = {
+            "n_calls":              0,
+            "act_abs_max":          0.0,
+            "act_abs_mean_acc":     0.0,
+            # fraction of elements above threshold, accumulated then averaged
+            "act_outlier_frac_6":   0.0,   # post-LayerNorm outliers
+            "act_outlier_frac_100": 0.0,   # residual-stream outliers
+            "act_outlier_frac_1k":  0.0,   # massive-activation range
+            # per-channel (feature dim) running max — shape [in_features]
+            "act_channel_abs_max":  None,
+            # weight stats from absmax scale factors (set on first call)
+            "weight_absmax_max":    None,
+            "weight_absmax_mean":   None,
+        }
+
+    def _collect_stats(self, x: torch.Tensor) -> None:
+        with torch.no_grad():
+            xf   = x.detach().float()
+            numel = xf.numel()
+            n    = self._stats["n_calls"]
+            self._stats["n_calls"] = n + 1
+
+            abs_vals = xf.abs()
+            self._stats["act_abs_max"]      = max(self._stats["act_abs_max"], abs_vals.max().item())
+            self._stats["act_abs_mean_acc"] += abs_vals.mean().item()
+            self._stats["act_outlier_frac_6"]   += (abs_vals > 6.0).sum().item()   / numel
+            self._stats["act_outlier_frac_100"]  += (abs_vals > 100.0).sum().item() / numel
+            self._stats["act_outlier_frac_1k"]   += (abs_vals > 1000.0).sum().item() / numel
+
+            # per-channel max: collapse everything except the last (feature) dim
+            ch_max = abs_vals.reshape(-1, abs_vals.shape[-1]).max(dim=0).values
+            prev   = self._stats["act_channel_abs_max"]
+            self._stats["act_channel_abs_max"] = ch_max if prev is None else torch.maximum(prev, ch_max)
+
+            # weight absmax: read directly from quant_state scale factors (no dequant needed)
+            if self._stats["weight_absmax_max"] is None:
+                qs = self.weight.quant_state
+                if qs is not None and qs.absmax is not None:
+                    am = qs.absmax.float()
+                    self._stats["weight_absmax_max"]  = am.max().item()
+                    self._stats["weight_absmax_mean"] = am.mean().item()
+
+    def get_stats(self) -> dict:
+        s  = dict(self._stats)
+        n  = max(s.pop("n_calls"), 1)
+        s["act_abs_mean"]          = s.pop("act_abs_mean_acc") / n
+        s["act_outlier_frac_6"]   /= n
+        s["act_outlier_frac_100"] /= n
+        s["act_outlier_frac_1k"]  /= n
+        ch = s["act_channel_abs_max"]
+        s["act_channel_abs_max"] = ch.tolist() if ch is not None else None
+        s["n_calls"] = n
+        return s
 
     def set_compute_type(self, x):
         if x.dtype in [torch.float32, torch.bfloat16]:
@@ -537,6 +595,9 @@ class Linear4bit(nn.Linear):
                 destination[prefix + "weight." + k] = v if keep_vars else v.detach()
 
     def forward(self, x: torch.Tensor):
+        if self._stats_enabled:
+            self._collect_stats(x)
+
         fix_4bit_weight_quant_state_from_module(self)
         quant_state = self.weight.quant_state
 

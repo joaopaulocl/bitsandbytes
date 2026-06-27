@@ -237,7 +237,7 @@ void fp8_e5m2_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int 
     CUDA_CHECK_RETURN(cudaPeekAtLastError());
 }
 
-void bf16_approx_matmul(__nv_bfloat16* A, __nv_bfloat16* B, float* C, int M, int N, int K, cudaStream_t stream) {
+void bf16_approx_matmul(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int M, int N, int K, cudaStream_t stream) {
     dim3 blockDim(16, 16);
     dim3 gridDim((N + 15) / 16, (M + 15) / 16);
     kbf16_approx_matmul_faithful<<<gridDim, blockDim, 0, stream>>>(A, B, C, M, N, K);

@@ -648,7 +648,7 @@ def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
 
 @register_kernel("bitsandbytes::bf16_approx_matmul", "cuda")
 def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
-    out = torch.empty((M, N), dtype=torch.float32, device=A.device)
+    out = torch.empty((M, N), dtype=torch.bfloat16, device=A.device)
     torch._check(A.dtype == torch.bfloat16, lambda: f"A must be bfloat16, got {A.dtype}")
     torch._check(B.dtype == torch.bfloat16, lambda: f"B must be bfloat16, got {B.dtype}")
     torch._check(A.is_contiguous(), lambda: "A must be contiguous")
@@ -658,6 +658,12 @@ def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
     torch._check(B.shape == (N, K), lambda: f"B.shape must be ({N}, {K}), got {B.shape}")
     with _cuda_device_of(A):
         lib.cbf16_approx_matmul(get_ptr(A), get_ptr(B), get_ptr(out), ct.c_int(M), ct.c_int(N), ct.c_int(K), _get_tensor_stream(A))
+    # Prevent PyTorch from freeing A/B storage (via cudaFree) before the async
+    # kernel finishes reading them. Required when A or B are temporary tensors
+    # (e.g. from .bfloat16() or .contiguous()) under memory pressure.
+    stream = torch.cuda.current_stream(A.device)
+    A.record_stream(stream)
+    B.record_stream(stream)
     return out
 
 

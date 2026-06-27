@@ -3109,7 +3109,7 @@ __device__ __forceinline__ __nv_bfloat16 bf16_approx_mul(uint16_t a, uint16_t b)
 }
 
 __global__ void kbf16_approx_matmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B,
-                                              float* C, int M, int N, int K) {
+                                              __nv_bfloat16* C, int M, int N, int K) {
     __shared__ uint16_t As[APPROX_TILE][APPROX_TILE];
     __shared__ uint16_t Bs[APPROX_TILE][APPROX_TILE + 1];  // +1 avoids bank conflicts
 
@@ -3120,11 +3120,11 @@ __global__ void kbf16_approx_matmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B,
 
     for (int k0 = 0; k0 < K; k0 += APPROX_TILE) {
         As[ty][tx] = (i < M && (k0+tx) < K)
-            ? __bfloat16_as_ushort(A[i*K + k0 + tx]) : 0;
+            ? __bfloat16_as_ushort(A[(int64_t)i*K + k0 + tx]) : 0;
 
         int j_load = blockIdx.x * APPROX_TILE + ty;
         Bs[tx][ty] = (j_load < N && (k0+tx) < K)
-            ? __bfloat16_as_ushort(B[j_load*K + k0 + tx]) : 0;
+            ? __bfloat16_as_ushort(B[(int64_t)j_load*K + k0 + tx]) : 0;
         __syncthreads();
 
         if (i < M && j < N) {
@@ -3136,7 +3136,7 @@ __global__ void kbf16_approx_matmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B,
         __syncthreads();
     }
 
-    if (i < M && j < N) C[i*N + j] = acc;
+    if (i < M && j < N) C[(int64_t)i*N + j] = __float2bfloat16(acc);
 }
 
 // Element-wise BF16 approximate multiply — approx variant

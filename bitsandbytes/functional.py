@@ -943,7 +943,7 @@ def bf16_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
         B: (N, K) torch.bfloat16, contiguous (pre-transposed weight)
 
     Returns:
-        (M, N) torch.float32
+        (M, N) torch.bfloat16
     """
     if not A.is_contiguous():
         A = A.contiguous()

@@ -954,6 +954,29 @@ def bf16_approx_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     return torch.ops.bitsandbytes.bf16_approx_matmul.default(A, B, M, N, K)
 
 
+def bf16_mitchell_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Mitchell's logarithmic approximate BF16 matmul.
+
+    Uses log2(1+m) ≈ m so the mantissa product becomes a simple addition:
+    m_out = (m_A + m_B) mod 128, carry bit bumps the exponent.
+    No LUT required — purely arithmetic approximation.
+
+    Args:
+        A: (M, K) torch.bfloat16, contiguous
+        B: (N, K) torch.bfloat16, contiguous (pre-transposed weight)
+
+    Returns:
+        (M, N) torch.bfloat16
+    """
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
+    M, K = A.shape
+    N = B.shape[0]
+    return torch.ops.bitsandbytes.bf16_mitchell_matmul.default(A, B, M, N, K)
+
+
 def bf16_approx_ewmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     """Approximate BF16 element-wise multiply using PRIM8 LUT for mantissa cross-product.
 

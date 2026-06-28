@@ -24,6 +24,7 @@ from bitsandbytes.functional import (
     quantize_nf4,
     fp32_approx_matmul,
     bf16_approx_matmul,
+    bf16_mitchell_matmul,
     fp16_approx_matmul,
     fp8_e4m3_approx_matmul,
     fp8_e5m2_approx_matmul,
@@ -994,6 +995,31 @@ class LinearApproxBfloat16(_LinearApproxBase):
 
     def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
         return bf16_approx_matmul(x_2d.bfloat16(), w.bfloat16())
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        if "weight" in state_dict and state_dict["weight"].dtype != torch.bfloat16:
+            state_dict = dict(state_dict)
+            state_dict["weight"] = state_dict["weight"].to(torch.bfloat16)
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
+
+class LinearApproxMitchell(_LinearApproxBase):
+    """Linear layer using Mitchell's logarithmic approximate BF16 matmul.
+
+    Mitchell's algorithm: log2(1+m) ≈ m, so the mantissa product reduces to
+    integer addition — no cross-product or LUT lookup required:
+
+        m_out = (m_A + m_B) mod 128
+        e_out = e_A + e_B - 127 + carry   (carry = 1 when m_A + m_B >= 128)
+
+    Weights are stored in ``torch.bfloat16``.
+    Input is cast to bfloat16 before the kernel.
+    Output is cast back to the original input dtype.
+    """
+    _weight_dtype = torch.bfloat16
+
+    def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        return bf16_mitchell_matmul(x_2d.bfloat16(), w.bfloat16())
 
     def load_state_dict(self, state_dict, strict=True, assign=False):
         if "weight" in state_dict and state_dict["weight"].dtype != torch.bfloat16:

@@ -372,6 +372,17 @@ def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
     return torch.empty((M, N), dtype=torch.bfloat16, device=A.device)
 
 torch.library.define(
+    "bitsandbytes::bf16_mitchell_matmul",
+    "(Tensor A, Tensor B, int M, int N, int K) -> Tensor",
+)
+
+@register_fake("bitsandbytes::bf16_mitchell_matmul")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    torch._check(A.dtype == torch.bfloat16, lambda: f"A must be bfloat16, got {A.dtype}")
+    torch._check(B.dtype == torch.bfloat16, lambda: f"B must be bfloat16, got {B.dtype}")
+    return torch.empty((M, N), dtype=torch.bfloat16, device=A.device)
+
+torch.library.define(
     "bitsandbytes::bf16_approx_ewmul",
     "(Tensor A, Tensor B, int n) -> Tensor",
 )

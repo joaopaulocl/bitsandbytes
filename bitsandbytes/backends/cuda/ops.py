@@ -667,6 +667,24 @@ def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
     return out
 
 
+@register_kernel("bitsandbytes::bf16_mitchell_matmul", "cuda")
+def _(A: torch.Tensor, B: torch.Tensor, M: int, N: int, K: int) -> torch.Tensor:
+    out = torch.empty((M, N), dtype=torch.bfloat16, device=A.device)
+    torch._check(A.dtype == torch.bfloat16, lambda: f"A must be bfloat16, got {A.dtype}")
+    torch._check(B.dtype == torch.bfloat16, lambda: f"B must be bfloat16, got {B.dtype}")
+    torch._check(A.is_contiguous(), lambda: "A must be contiguous")
+    torch._check(B.is_contiguous(), lambda: "B must be contiguous")
+    torch._check(A.device == B.device, lambda: f"A and B must be on the same device, got {A.device} and {B.device}")
+    torch._check(A.shape == (M, K), lambda: f"A.shape must be ({M}, {K}), got {A.shape}")
+    torch._check(B.shape == (N, K), lambda: f"B.shape must be ({N}, {K}), got {B.shape}")
+    with _cuda_device_of(A):
+        lib.cbf16_mitchell_matmul(get_ptr(A), get_ptr(B), get_ptr(out), ct.c_int(M), ct.c_int(N), ct.c_int(K), _get_tensor_stream(A))
+    stream = torch.cuda.current_stream(A.device)
+    A.record_stream(stream)
+    B.record_stream(stream)
+    return out
+
+
 @register_kernel("bitsandbytes::bf16_approx_ewmul", "cuda")
 def _(A: torch.Tensor, B: torch.Tensor, n: int) -> torch.Tensor:
     out = torch.empty((n,), dtype=torch.float32, device=A.device)

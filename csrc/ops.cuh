@@ -136,6 +136,7 @@ void fp16_approx_matmul(__half* A, __half* B, float* C, int M, int N, int K, cud
 void fp8_e4m3_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K, cudaStream_t stream);
 void fp8_e5m2_approx_matmul(uint8_t* A, uint8_t* B, float* C, int M, int N, int K, cudaStream_t stream);
 void bf16_approx_matmul(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int M, int N, int K, cudaStream_t stream);
+void bf16_mitchell_matmul(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int M, int N, int K, cudaStream_t stream);
 void bf16_approx_ewmul(__nv_bfloat16* A, __nv_bfloat16* B, float* C, int n, cudaStream_t stream);
 void bf16_approx_ewmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int n, cudaStream_t stream);
 void set_prim8_lut(int lut_id, cudaStream_t stream);

@@ -977,6 +977,51 @@ def bf16_mitchell_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     return torch.ops.bitsandbytes.bf16_mitchell_matmul.default(A, B, M, N, K)
 
 
+def bf16_mitchell_a_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Activation-only Mitchell approximate BF16 matmul.
+
+    Approximates m_A * m_B ≈ m_A, treating the weight as a pure power-of-two.
+    No carry possible since m_A < 128; exponent is e_A + e_B - 127.
+
+    Args:
+        A: (M, K) torch.bfloat16, contiguous
+        B: (N, K) torch.bfloat16, contiguous (pre-transposed weight)
+
+    Returns:
+        (M, N) torch.bfloat16
+    """
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
+    M, K = A.shape
+    N = B.shape[0]
+    return torch.ops.bitsandbytes.bf16_mitchell_a_matmul.default(A, B, M, N, K)
+
+
+def bf16_mitchell_b1_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Mitchell approximate BF16 matmul using m_A + MSB(m_B).
+
+    Intermediate between MitchellA (0 bits of m_B) and Mitchell (all 7 bits).
+    Only the most-significant bit of the weight mantissa contributes, allowing
+    a carry into the exponent when m_A >= 64 and MSB(m_B) = 1.
+
+    Args:
+        A: (M, K) torch.bfloat16, contiguous
+        B: (N, K) torch.bfloat16, contiguous (pre-transposed weight)
+
+    Returns:
+        (M, N) torch.bfloat16
+    """
+    if not A.is_contiguous():
+        A = A.contiguous()
+    if not B.is_contiguous():
+        B = B.contiguous()
+    M, K = A.shape
+    N = B.shape[0]
+    return torch.ops.bitsandbytes.bf16_mitchell_b1_matmul.default(A, B, M, N, K)
+
+
 def bf16_approx_ewmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     """Approximate BF16 element-wise multiply using PRIM8 LUT for mantissa cross-product.
 

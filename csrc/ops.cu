@@ -251,6 +251,20 @@ void bf16_mitchell_matmul(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, 
     CUDA_CHECK_RETURN(cudaPeekAtLastError());
 }
 
+void bf16_mitchell_a_matmul(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int M, int N, int K, cudaStream_t stream) {
+    dim3 blockDim(16, 16);
+    dim3 gridDim((N + 15) / 16, (M + 15) / 16);
+    kbf16_approx_matmul_mitchell_a<<<gridDim, blockDim, 0, stream>>>(A, B, C, M, N, K);
+    CUDA_CHECK_RETURN(cudaPeekAtLastError());
+}
+
+void bf16_mitchell_b1_matmul(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int M, int N, int K, cudaStream_t stream) {
+    dim3 blockDim(16, 16);
+    dim3 gridDim((N + 15) / 16, (M + 15) / 16);
+    kbf16_approx_matmul_mitchell_b1<<<gridDim, blockDim, 0, stream>>>(A, B, C, M, N, K);
+    CUDA_CHECK_RETURN(cudaPeekAtLastError());
+}
+
 void bf16_approx_ewmul(__nv_bfloat16* A, __nv_bfloat16* B, float* C, int n, cudaStream_t stream) {
     int blocks = (n + 255) / 256;
     kbf16_approx_ewmul<<<blocks, 256, 0, stream>>>(A, B, C, n);

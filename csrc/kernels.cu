@@ -3166,6 +3166,116 @@ __global__ void kbf16_approx_matmul_mitchell(__nv_bfloat16* A, __nv_bfloat16* B,
     if (i < M && j < N) C[(int64_t)i*N + j] = __float2bfloat16(acc);
 }
 
+// Activation-only mantissa approximation: keep m_A, discard m_B.
+// Treats the weight as a pure power-of-two; no carry possible (m_A < 128).
+__device__ __forceinline__ __nv_bfloat16 bf16_mitchell_a_mul(uint16_t a, uint16_t b) {
+    int sign_a = (a >> 15) & 1;
+    int sign_b = (b >> 15) & 1;
+    int exp_a  = (a >> 7) & 0xFF;
+    int exp_b  = (b >> 7) & 0xFF;
+    int ma     =  a & 0x7F;
+
+    if (exp_a == 0 || exp_b == 0)
+        return __ushort_as_bfloat16((sign_a ^ sign_b) << 15);
+    if (exp_a == 255 || exp_b == 255)
+        return __ushort_as_bfloat16(((sign_a ^ sign_b) << 15) | (0xFF << 7));
+
+    int exp_out = exp_a + exp_b - 127;
+
+    if (exp_out <= 0)   return __ushort_as_bfloat16((sign_a ^ sign_b) << 15);
+    if (exp_out >= 255) return __ushort_as_bfloat16(((sign_a ^ sign_b) << 15) | (0xFF << 7));
+
+    return __ushort_as_bfloat16(((sign_a ^ sign_b) << 15) | (exp_out << 7) | ma);
+}
+
+__global__ void kbf16_approx_matmul_mitchell_a(__nv_bfloat16* A, __nv_bfloat16* B,
+                                                __nv_bfloat16* C, int M, int N, int K) {
+    __shared__ uint16_t As[APPROX_TILE][APPROX_TILE];
+    __shared__ uint16_t Bs[APPROX_TILE][APPROX_TILE + 1];
+
+    int tx = threadIdx.x, ty = threadIdx.y;
+    int i  = blockIdx.y * APPROX_TILE + ty;
+    int j  = blockIdx.x * APPROX_TILE + tx;
+    float acc = 0.0f;
+
+    for (int k0 = 0; k0 < K; k0 += APPROX_TILE) {
+        As[ty][tx] = (i < M && (k0+tx) < K)
+            ? __bfloat16_as_ushort(A[(int64_t)i*K + k0 + tx]) : 0;
+
+        int j_load = blockIdx.x * APPROX_TILE + ty;
+        Bs[tx][ty] = (j_load < N && (k0+tx) < K)
+            ? __bfloat16_as_ushort(B[(int64_t)j_load*K + k0 + tx]) : 0;
+        __syncthreads();
+
+        if (i < M && j < N) {
+            #pragma unroll
+            for (int k = 0; k < APPROX_TILE; k++) {
+                acc += __bfloat162float(bf16_mitchell_a_mul(As[ty][k], Bs[k][tx]));
+            }
+        }
+        __syncthreads();
+    }
+
+    if (i < M && j < N) C[(int64_t)i*N + j] = __float2bfloat16(acc);
+}
+
+// Activation mantissa + MSB of weight mantissa approximation.
+// m_sum = m_A + (m_B & 0x40), so carry is possible when m_A >= 64 and MSB(m_B)=1.
+__device__ __forceinline__ __nv_bfloat16 bf16_mitchell_b1_mul(uint16_t a, uint16_t b) {
+    int sign_a = (a >> 15) & 1;
+    int sign_b = (b >> 15) & 1;
+    int exp_a  = (a >> 7) & 0xFF;
+    int exp_b  = (b >> 7) & 0xFF;
+    int ma     =  a & 0x7F;
+    int mb_msb =  b & 0x40;   // 64 or 0
+
+    if (exp_a == 0 || exp_b == 0)
+        return __ushort_as_bfloat16((sign_a ^ sign_b) << 15);
+    if (exp_a == 255 || exp_b == 255)
+        return __ushort_as_bfloat16(((sign_a ^ sign_b) << 15) | (0xFF << 7));
+
+    int m_sum    = ma + mb_msb;   // range [0, 191]
+    int carry    = m_sum >> 7;
+    int mant_out = m_sum & 0x7F;
+    int exp_out  = exp_a + exp_b - 127 + carry;
+
+    if (exp_out <= 0)   return __ushort_as_bfloat16((sign_a ^ sign_b) << 15);
+    if (exp_out >= 255) return __ushort_as_bfloat16(((sign_a ^ sign_b) << 15) | (0xFF << 7));
+
+    return __ushort_as_bfloat16(((sign_a ^ sign_b) << 15) | (exp_out << 7) | mant_out);
+}
+
+__global__ void kbf16_approx_matmul_mitchell_b1(__nv_bfloat16* A, __nv_bfloat16* B,
+                                                 __nv_bfloat16* C, int M, int N, int K) {
+    __shared__ uint16_t As[APPROX_TILE][APPROX_TILE];
+    __shared__ uint16_t Bs[APPROX_TILE][APPROX_TILE + 1];
+
+    int tx = threadIdx.x, ty = threadIdx.y;
+    int i  = blockIdx.y * APPROX_TILE + ty;
+    int j  = blockIdx.x * APPROX_TILE + tx;
+    float acc = 0.0f;
+
+    for (int k0 = 0; k0 < K; k0 += APPROX_TILE) {
+        As[ty][tx] = (i < M && (k0+tx) < K)
+            ? __bfloat16_as_ushort(A[(int64_t)i*K + k0 + tx]) : 0;
+
+        int j_load = blockIdx.x * APPROX_TILE + ty;
+        Bs[tx][ty] = (j_load < N && (k0+tx) < K)
+            ? __bfloat16_as_ushort(B[(int64_t)j_load*K + k0 + tx]) : 0;
+        __syncthreads();
+
+        if (i < M && j < N) {
+            #pragma unroll
+            for (int k = 0; k < APPROX_TILE; k++) {
+                acc += __bfloat162float(bf16_mitchell_b1_mul(As[ty][k], Bs[k][tx]));
+            }
+        }
+        __syncthreads();
+    }
+
+    if (i < M && j < N) C[(int64_t)i*N + j] = __float2bfloat16(acc);
+}
+
 __global__ void kbf16_approx_matmul_faithful(__nv_bfloat16* A, __nv_bfloat16* B,
                                               __nv_bfloat16* C, int M, int N, int K) {
     __shared__ uint16_t As[APPROX_TILE][APPROX_TILE];

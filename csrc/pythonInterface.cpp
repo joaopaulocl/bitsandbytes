@@ -451,6 +451,14 @@ void cbf16_mitchell_matmul(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C,
     bf16_mitchell_matmul(A, B, C, M, N, K, stream);
 }
 
+void cbf16_mitchell_a_matmul(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int M, int N, int K, cudaStream_t stream) {
+    bf16_mitchell_a_matmul(A, B, C, M, N, K, stream);
+}
+
+void cbf16_mitchell_b1_matmul(__nv_bfloat16* A, __nv_bfloat16* B, __nv_bfloat16* C, int M, int N, int K, cudaStream_t stream) {
+    bf16_mitchell_b1_matmul(A, B, C, M, N, K, stream);
+}
+
 void cbf16_approx_ewmul(__nv_bfloat16* A, __nv_bfloat16* B, float* C, int n, cudaStream_t stream) {
     bf16_approx_ewmul(A, B, C, n, stream);
 }

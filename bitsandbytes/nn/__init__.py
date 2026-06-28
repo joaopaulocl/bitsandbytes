@@ -20,6 +20,8 @@ from .modules import (
     LinearApproxFP8E5M2,
     LinearApproxBfloat16,
     LinearApproxMitchell,
+    LinearApproxMitchellA,
+    LinearApproxMitchellB1,
     OutlierAwareLinear,
     Params4bit,
     StableEmbedding,

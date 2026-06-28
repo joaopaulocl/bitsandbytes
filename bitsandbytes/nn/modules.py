@@ -25,6 +25,8 @@ from bitsandbytes.functional import (
     fp32_approx_matmul,
     bf16_approx_matmul,
     bf16_mitchell_matmul,
+    bf16_mitchell_a_matmul,
+    bf16_mitchell_b1_matmul,
     fp16_approx_matmul,
     fp8_e4m3_approx_matmul,
     fp8_e5m2_approx_matmul,
@@ -1020,6 +1022,59 @@ class LinearApproxMitchell(_LinearApproxBase):
 
     def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
         return bf16_mitchell_matmul(x_2d.bfloat16(), w.bfloat16())
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        if "weight" in state_dict and state_dict["weight"].dtype != torch.bfloat16:
+            state_dict = dict(state_dict)
+            state_dict["weight"] = state_dict["weight"].to(torch.bfloat16)
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
+
+class LinearApproxMitchellA(_LinearApproxBase):
+    """Linear layer using activation-only Mitchell approximate BF16 matmul.
+
+    Approximates m_A * m_B ≈ m_A, discarding the weight's mantissa entirely.
+    The weight is treated as a pure power-of-two: 2^(e_B - 127).
+
+        m_out = m_A
+        e_out = e_A + e_B - 127
+
+    Weights are stored in ``torch.bfloat16``.
+    Input is cast to bfloat16 before the kernel.
+    Output is cast back to the original input dtype.
+    """
+    _weight_dtype = torch.bfloat16
+
+    def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        return bf16_mitchell_a_matmul(x_2d.bfloat16(), w.bfloat16())
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        if "weight" in state_dict and state_dict["weight"].dtype != torch.bfloat16:
+            state_dict = dict(state_dict)
+            state_dict["weight"] = state_dict["weight"].to(torch.bfloat16)
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
+
+class LinearApproxMitchellB1(_LinearApproxBase):
+    """Linear layer using m_A + MSB(m_B) Mitchell approximate BF16 matmul.
+
+    Uses the activation's full 7-bit mantissa plus only the most-significant
+    bit of the weight's mantissa. Carry into the exponent is possible when
+    m_A >= 64 and MSB(m_B) = 1.
+
+        m_sum = m_A + (m_B & 0x40)   # 0x40 = 64
+        carry = m_sum >> 7
+        m_out = m_sum & 0x7F
+        e_out = e_A + e_B - 127 + carry
+
+    Weights are stored in ``torch.bfloat16``.
+    Input is cast to bfloat16 before the kernel.
+    Output is cast back to the original input dtype.
+    """
+    _weight_dtype = torch.bfloat16
+
+    def _approx_matmul(self, x_2d: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        return bf16_mitchell_b1_matmul(x_2d.bfloat16(), w.bfloat16())
 
     def load_state_dict(self, state_dict, strict=True, assign=False):
         if "weight" in state_dict and state_dict["weight"].dtype != torch.bfloat16:
